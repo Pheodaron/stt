@@ -2,11 +2,7 @@
 # Replace only the generated native-library bundle, keeping the Go C API version.
 set -eu
 cd "$(dirname "$0")/.."
-destination=${1:-bin/lib}
-case "$destination" in
-  /*) ;;
-  *) destination="$(pwd)/$destination" ;;
-esac
+destination=/out/lib
 
 if [ "$(go env GOOS)/$(go env GOARCH)" != linux/amd64 ]; then
   echo 'The packaged CUDA runtime supports Linux amd64 only.' >&2

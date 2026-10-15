@@ -3,15 +3,14 @@ FROM docker.io/library/golang:1.25-bookworm AS build
 WORKDIR /src
 ARG GOPROXY=https://proxy.golang.org,direct
 ARG GONOPROXY
-COPY go.mod go.sum ./
-RUN --mount=type=secret,id=proxy_ca \
-    if [ -f /run/secrets/proxy_ca ]; then export SSL_CERT_FILE=/run/secrets/proxy_ca GIT_SSL_CAINFO=/run/secrets/proxy_ca; fi; \
-    go mod download
 COPY . .
-RUN --mount=type=secret,id=proxy_ca \
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=secret,id=proxy_ca \
     if [ -f /run/secrets/proxy_ca ]; then export SSL_CERT_FILE=/run/secrets/proxy_ca GIT_SSL_CAINFO=/run/secrets/proxy_ca; fi; \
-    sh script/build.sh
-RUN --mount=type=secret,id=proxy_ca --mount=type=secret,id=cuda_archive \
+    sh script/build-container.sh
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=secret,id=proxy_ca --mount=type=secret,id=cuda_archive \
     if [ -f /run/secrets/proxy_ca ]; then export CURL_CA_BUNDLE=/run/secrets/proxy_ca; fi; \
     if [ -f /run/secrets/cuda_archive ]; then export SHERPA_CUDA_ARCHIVE=/run/secrets/cuda_archive; fi; \
     sh script/install-cuda-libs.sh
@@ -22,7 +21,7 @@ RUN --mount=type=secret,id=proxy_ca \
     apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certificates libstdc++6 && \
     rm -rf /var/lib/apt/lists/* /tmp/apt-proxy-ca.conf
 WORKDIR /app
-COPY --from=build /src/bin/ /app/
+COPY --from=build /out/ /app/
 ENV LD_LIBRARY_PATH=/app/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/lib64 \
     URL=0.0.0.0 PORT=8080 MODEL_PROVIDER=cuda MODEL_PRECISION=fp32 \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility NVIDIA_TF32_OVERRIDE=0

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"log/slog"
 	"net"
@@ -21,20 +20,17 @@ import (
 const shutdownTimeout = 10 * time.Second
 
 func main() {
-	envFile := flag.String("env", ".env", "Optional dotenv configuration")
-	flag.Parse()
-
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	if err := run(ctx, *envFile); err != nil {
+	if err := run(ctx); err != nil {
 		slog.Error("server stopped", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, envFile string) error {
-	cfg, err := config.Load(envFile)
+func run(ctx context.Context) error {
+	cfg, err := config.FromEnv()
 	if err != nil {
 		return err
 	}

@@ -3,14 +3,12 @@ FROM docker.io/library/golang:1.25-bookworm AS build
 WORKDIR /src
 ARG GOPROXY=https://proxy.golang.org,direct
 ARG GONOPROXY
-COPY go.mod go.sum ./
-RUN --mount=type=secret,id=proxy_ca \
-    if [ -f /run/secrets/proxy_ca ]; then export SSL_CERT_FILE=/run/secrets/proxy_ca GIT_SSL_CAINFO=/run/secrets/proxy_ca; fi; \
-    go mod download
 COPY . .
-RUN --mount=type=secret,id=proxy_ca \
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=secret,id=proxy_ca \
     if [ -f /run/secrets/proxy_ca ]; then export SSL_CERT_FILE=/run/secrets/proxy_ca GIT_SSL_CAINFO=/run/secrets/proxy_ca; fi; \
-    sh script/build.sh
+    sh script/build-container.sh
 
 FROM docker.io/library/debian:bookworm-slim
 RUN --mount=type=secret,id=proxy_ca \
@@ -18,7 +16,7 @@ RUN --mount=type=secret,id=proxy_ca \
     apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certificates libstdc++6 && \
     rm -rf /var/lib/apt/lists/* /tmp/apt-proxy-ca.conf
 WORKDIR /app
-COPY --from=build /src/bin/ /app/
+COPY --from=build /out/ /app/
 ENV LD_LIBRARY_PATH=/app/lib URL=0.0.0.0 PORT=8080 MODEL_PROVIDER=cpu MODEL_PRECISION=fp32
 USER 65532:65532
 EXPOSE 8080

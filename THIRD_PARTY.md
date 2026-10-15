@@ -15,7 +15,6 @@
 | gRPC Go | [Apache-2.0](https://github.com/grpc/grpc-go/blob/master/LICENSE) |
 | protobuf Go | [BSD-3-Clause](https://github.com/protocolbuffers/protobuf-go/blob/master/LICENSE) |
 | Gorilla WebSocket | [BSD-2-Clause](https://github.com/gorilla/websocket/blob/main/LICENSE) |
-| godotenv | [MIT](https://github.com/joho/godotenv/blob/main/LICENCE) |
 | FFmpeg (системный пакет) | [зависит от сборки](https://ffmpeg.org/legal.html) |
 
 При распространении нативных бинарников учитывайте также уведомления транзитивных компонентов

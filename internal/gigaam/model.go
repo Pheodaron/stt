@@ -39,7 +39,7 @@ func New(c config.Config) (*Model, error) {
 	for _, path := range []string{c.Encoder, c.Decoder, c.Joiner, c.Tokens} {
 		info, err := os.Stat(path)
 		if err != nil {
-			return nil, fmt.Errorf("model file %q: %w; run mise run model", path, err)
+			return nil, fmt.Errorf("model file %q: %w; mount a sherpa-compatible model directory into the container", path, err)
 		}
 		if !info.Mode().IsRegular() || info.Size() == 0 {
 			return nil, fmt.Errorf("invalid model file %q", path)

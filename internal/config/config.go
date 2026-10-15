@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"time"
-
-	"github.com/joho/godotenv"
 )
 
 // Config keeps the original environment names and adds inference settings.
@@ -38,16 +36,6 @@ type Config struct {
 	Decoder      string
 	Joiner       string
 	Tokens       string
-}
-
-func Load(envFile string) (Config, error) {
-	if envFile != "" {
-		if err := godotenv.Load(envFile); err != nil && !os.IsNotExist(err) {
-			return Config{}, err
-		}
-	}
-
-	return FromEnv()
 }
 
 func FromEnv() (Config, error) {
