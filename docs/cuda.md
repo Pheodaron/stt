@@ -1,104 +1,121 @@
-# CPU и NVIDIA CUDA
+# CPU и NVIDIA CUDA с mise и Podman
 
-Оба режима используют один Go-сервер и ту же полную GigaAM v3 E2E RNNT FP32.
-Вычисления выполняются в процессе приложения через sherpa-onnx/ONNX Runtime.
-Отдельный inference-сервис не требуется.
+Оба режима используют один Go-сервер и GigaAM v3 E2E RNNT FP32 внутри процесса.
+Mise закрепляет Go 1.25.1 и запускает задачи из `mise.toml`. Docker daemon не нужен.
+Podman, системный компилятор и FFmpeg устанавливаются отдельно.
 
 ## CPU
 
 ```bash
 cp .env.example .env
-make model
-docker compose -f compose.cpu.yaml up --build
+mise trust
+mise install
+mise run model
+mise run build:image-cpu
+mise run run:cpu
 ```
 
-`Dockerfile.cpu`: Go 1.25, штатные CPU-библиотеки sherpa-onnx Go 1.13.8,
-runtime Debian bookworm, FFmpeg. Сборка предусмотрена для Linux amd64/arm64;
-arm64 здесь не проверялся.
+`Dockerfile.cpu`: штатные CPU-библиотеки sherpa-onnx Go 1.13.8 и Debian bookworm.
+Сборка предусмотрена для Linux amd64/arm64; arm64 здесь не проверялся.
+Прямые задачи используют Podman и не зависят от внешнего Compose provider.
 
-## CUDA
+## NVIDIA CDI
 
-Требуются Linux amd64, NVIDIA GPU с драйвером, совместимым с CUDA 12.8,
-NVIDIA Container Toolkit и Docker Compose с поддержкой GPU reservations.
-CUDA/cuDNN внутри образа; драйвер предоставляет хост.
+Требуются Podman 5+, Linux amd64, NVIDIA GPU, драйвер для CUDA 12.8 и NVIDIA
+Container Toolkit с CDI. CUDA/cuDNN находятся в образе; драйвер предоставляет хост.
+Rootless Podman поддерживает CDI, если у пользователя есть доступ к устройствам GPU.
+
+Проверьте хост перед запуском:
 
 ```bash
-# Модель уже подготовлена тем же make model, повторная конвертация не нужна.
-docker compose -f compose.gpu.yaml up --build
-
-# Выбор другой физической GPU:
-GPU_DEVICE_ID=1 docker compose -f compose.gpu.yaml up --build
+nvidia-smi
+nvidia-ctk cdi list
 ```
 
-`GPU_DEVICE_ID` — GPU хоста. Внутри контейнера выбранное устройство отображается
-как CUDA device 0. Также можно ограничивать устройства через NVIDIA Container Toolkit.
-GPU-конфигурация сохраняет FP32 и не включает квантование.
-
-Отдельный запуск без Compose:
+Список CDI должен содержать, например, `nvidia.com/gpu=0`. В новых установках
+Toolkit спецификации обновляет сервис `nvidia-cdi-refresh`. Если автоматическое
+обновление не настроено и спецификаций нет, их можно создать вручную:
 
 ```bash
-make image-gpu
-docker run --rm --gpus '"device=0"' -p 8080:8080 \
-  -v "$PWD/models:/app/models:ro" vks-stt-go:cuda
+sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+nvidia-ctk cdi list
 ```
 
-Переключение с CPU на GPU:
+Не создавайте вторую спецификацию тех же устройств поверх автоматически
+сгенерированной. После смены GPU/драйвера обновите спецификацию выбранным способом.
+
+В `.env` задайте `GPU_DEVICE_ID=0`, другой индекс или GPU UUID из списка CDI.
+`all` открывает все GPU, но сервер использует CUDA device 0 среди видимых устройств.
 
 ```bash
-docker compose -f compose.cpu.yaml down
-docker compose -f compose.gpu.yaml up -d --build
+mise run build:image-gpu
+mise run run:gpu
 ```
 
-Обратно — `down` GPU-конфигурации и `up` CPU-конфигурации. Порт, protobuf,
-WebSocket JSON-RPC и формат результатов одинаковы. Буферы незавершённых сессий
-при перезапуске не сохраняются.
+Задача выполняет `podman run --device nvidia.com/gpu=...`. Для GPU используется
+`--security-opt label=disable` по рекомендации NVIDIA для SELinux; CPU сохраняет
+обычное разделение меток. `NVIDIA_VISIBLE_DEVICES=void` предотвращает повторную
+инъекцию через старый NVIDIA OCI hook. Модели монтируются с `:ro,z`; `:U` не
+используется, поэтому владельцы файлов модели на хосте не меняются.
+
+Из другого терминала:
+
+```bash
+mise run logs:gpu
+mise run stop:gpu
+```
+
+Переключение CPU → CUDA: `mise run stop:cpu`, затем `mise run run:gpu`.
+Порт, protobuf, WebSocket JSON-RPC и файлы FP32 остаются общими.
+Незавершённые сессии при перезапуске не сохраняются.
+
+## Compose по желанию
+
+`mise run run:compose-cpu` и `mise run run:compose-gpu` вызывают `podman compose`.
+Он требует внешний provider (например, актуальный podman-compose) с поддержкой
+CDI в `devices`. GPU reservations Docker в этих файлах не используются.
+При несовместимости provider используйте основные задачи `run:cpu` / `run:gpu`.
 
 ## Нативные библиотеки
 
-Go API закреплён на sherpa-onnx **1.13.8**. Go-программы компилируются с его
-штатным C API. GPU-образ заменяет CPU-библиотеки одноимёнными GPU-библиотеками
-**той же версии sherpa**, включая ONNX Runtime **1.28.2**, CUDA 12 и cuDNN 9.
-Версия Go API проверяется скриптом установки; архив проверяется SHA-256.
+Go API и native sherpa закреплены на **1.13.8**. GPU-образ содержит ONNX Runtime
+**1.28.2**, CUDA 12 и cuDNN 9. Архив проверяется SHA-256 перед установкой:
 
-Источник GPU runtime:
 https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-v1.13.8-cuda-12.x-cudnn-9.x-onnxruntime1.28.2-linux-x64-gpu.tar.bz2
 
 SHA-256: `2132af1ae8c84c84f86ac091e4311839287851d2bf5e660332ebce3898a1e0b2`.
 
-Для обычной сборки на хосте:
+Для запуска на хосте с уже установленными CUDA 12/cuDNN 9:
 
 ```bash
-make build-gpu
-MODEL_PROVIDER=cuda ./bin/stt-server
+mise run build:local-gpu
+mise run run:local-gpu
 ```
 
-На хосте при этом уже должны быть доступны совместимые CUDA 12 и cuDNN 9.
-`SHERPA_CUDA_ARCHIVE=/path/runtime.tar.bz2 make build-gpu` позволяет использовать
-локальный архив с тем же проверяемым SHA-256. `make build` возвращает CPU bundle.
+`SHERPA_CUDA_ARCHIVE=/path/runtime.tar.bz2 mise run build:local-gpu` использует
+локальный архив с тем же SHA-256. `mise run build` восстанавливает CPU-библиотеки.
 
-## Проверка запуска и точности
+## Качество и замеры
 
-При `MODEL_PROVIDER=cuda` проверяется именно загруженный ONNX Runtime:
-наличие CUDAExecutionProvider, драйвера, устройства и загрузка CUDA provider.
-При ошибке сервер не сообщает готовность и не подменяет GPU режимом CPU.
-ONNX Runtime по-прежнему может назначать отдельные вспомогательные операции CPU.
+CUDA-режим сохраняет FP32 и отключает TF32 через `NVIDIA_TF32_OVERRIDE=0`.
+При отсутствии CUDAExecutionProvider, драйвера или устройства сервер завершится
+до готовности. Вспомогательные операции графа могут выполняться на CPU.
+Разный порядок вычислений CPU/GPU требует сравнения качества на ваших записях.
 
-`NVIDIA_TF32_OVERRIDE=0` устанавливается до инициализации CUDA, чтобы сохранить
-политику FP32 вычислений. Веса модели не преобразуются при смене backend.
-Это не обещание побитового совпадения CPU/GPU: порядок вычислений отличается.
-Качество нужно сверять с исходной моделью на одних и тех же записях.
-
-Замер на машине с GPU:
+Поместите тестовую запись в `models/test.wav`:
 
 ```bash
-docker compose -f compose.gpu.yaml run --rm --no-deps \
-  --entrypoint /app/stt-bench stt \
-  -file /app/models/test.wav -threads 1,2,4 -runs 5
+mise run bench:gpu -- -file /app/models/test.wav -threads 1,2,4 -runs 5
+# Аналогичный CPU-замер:
+mise run bench:cpu -- -file /app/models/test.wav -threads 1,2,4 -runs 5
 ```
 
-Поместите тестовый файл в смонтированную директорию models. JSONL содержит
-`provider`, `precision`, путь энкодера, время загрузки, итерации и RTF.
-Значения CPU/INT8 из предыдущих замеров не являются измерениями CUDA/FP32.
+JSONL содержит provider, precision, время загрузки, итерации и RTF.
+Числа CPU/INT8 из предыдущих замеров не являются измерениями CUDA/FP32.
+Фактически выполненные проверки: [validation.md](validation.md).
 
-Официальная документация сборки sherpa CUDA:
+Документация NVIDIA по CDI:
+https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/cdi-support.html
+
+Документация sherpa CUDA:
 https://k2-fsa.github.io/sherpa/onnx/install/linux.html

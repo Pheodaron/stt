@@ -1,41 +1,42 @@
 .PHONY: build build-gpu image-cpu image-gpu model model-int8 run test race vet proto tools bench
 
-build:
-	sh script/build.sh
+# Compatibility shortcuts; mise.toml defines the actual commands.
 
-build-gpu: build
-	sh script/install-cuda-libs.sh
+build:
+	mise run build
+
+build-gpu:
+	mise run build:local-gpu
 
 image-cpu:
-	docker build -f Dockerfile.cpu -t vks-stt-go:cpu .
+	mise run build:image-cpu
 
 image-gpu:
-	docker build -f Dockerfile.gpu -t vks-stt-go:cuda .
+	mise run build:image-gpu
 
 model:
-	sh script/export-model-fp32.sh
+	mise run model
 
 model-int8:
-	sh script/download-model-int8.sh
+	mise run model:int8
 
 run:
-	go run ./cmd/stt-server
+	mise run run
 
 test:
-	go test ./...
+	mise run test
 
 race:
-	go test -race ./...
+	mise run race
 
 vet:
-	go vet ./...
+	mise run vet
 
 proto:
-	sh script/proto.sh
+	mise run proto
 
 tools:
-	go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.9
-	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1
+	mise run tools
 
 bench:
-	go run ./cmd/stt-bench -file "$(FILE)" -threads 1,2,4 -runs 5
+	mise run bench -- -file "$(FILE)" -threads 1,2,4 -runs 5

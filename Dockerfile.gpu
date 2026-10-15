@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM golang:1.25-bookworm AS build
+FROM docker.io/library/golang:1.25-bookworm AS build
 WORKDIR /src
 ARG GOPROXY=https://proxy.golang.org,direct
 ARG GONOPROXY
@@ -16,7 +16,7 @@ RUN --mount=type=secret,id=proxy_ca --mount=type=secret,id=cuda_archive \
     if [ -f /run/secrets/cuda_archive ]; then export SHERPA_CUDA_ARCHIVE=/run/secrets/cuda_archive; fi; \
     sh script/install-cuda-libs.sh
 
-FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04
+FROM docker.io/nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04
 RUN --mount=type=secret,id=proxy_ca \
     if [ -f /run/secrets/proxy_ca ]; then export APT_CONFIG=/tmp/apt-proxy-ca.conf; printf 'Acquire::https::CaInfo "/run/secrets/proxy_ca";\n' > "$APT_CONFIG"; fi; \
     apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certificates libstdc++6 && \

@@ -11,16 +11,14 @@ services:
       MODEL_PRECISION: fp32
       MODEL_DIR: /app/models/gigaam-v3-fp32
       NVIDIA_TF32_OVERRIDE: "0"
+      NVIDIA_VISIBLE_DEVICES: void
     ports:
       - "${PORT:-8080}:8080"
     volumes:
-      - ./models:/app/models:ro
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: ["${GPU_DEVICE_ID:-0}"]
-              capabilities: [gpu]
+      - ./models:/app/models:ro,z
+    devices:
+      - "nvidia.com/gpu=${GPU_DEVICE_ID:-0}"
+    security_opt:
+      - label=disable
     init: true
     restart: unless-stopped

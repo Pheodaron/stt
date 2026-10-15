@@ -13,6 +13,6 @@ services:
     ports:
       - "${PORT:-8080}:8080"
     volumes:
-      - ./models:/app/models:ro
+      - ./models:/app/models:ro,z
     init: true
     restart: unless-stopped

@@ -4,3 +4,5 @@ bin
 models
 *.zip
 .tools
+mise.local.toml
+mise.*.local.toml

@@ -1,32 +1,110 @@
 [tools]
 go = "1.25.1"
 
-[tasks."build:local-cpu"]
-run = "make build"
+[env]
+CGO_ENABLED = "1"
+_.file = ".env"
 
-[tasks."run:local-cpu"]
-run = "./bin/stt-server"
-
-[tasks."build:proto"]
-run = "make proto"
-
-[tasks."build:image-cpu"]
-run = "make image-cpu"
+[tasks.build]
+description = "Build Go binaries and CPU native libraries"
+alias = "build:local-cpu"
+run = "sh script/build.sh"
 
 [tasks."build:local-gpu"]
-run = "make build-gpu"
+description = "Build Go binaries and install the matching CUDA native libraries"
+run = ["sh script/build.sh", "sh script/install-cuda-libs.sh"]
+
+[tasks.run]
+description = "Run the local CPU server"
+alias = "run:local-cpu"
+env.MODEL_PROVIDER = "cpu"
+run = "./bin/stt-server"
 
 [tasks."run:local-gpu"]
-run = "MODEL_PROVIDER=cuda ./bin/stt-server"
+description = "Run the local server with CUDA native libraries already installed"
+env.MODEL_PROVIDER = "cuda"
+env.MODEL_PRECISION = "fp32"
+run = "./bin/stt-server"
+
+[tasks.model]
+description = "Export the original GigaAM weights to FP32 once"
+run = "sh script/export-model-fp32.sh"
+
+[tasks."model:int8"]
+description = "Download the optional CPU INT8 model"
+run = "sh script/download-model-int8.sh"
+
+[tasks."build:image-cpu"]
+description = "Build the CPU image with Podman"
+run = "sh script/podman.sh build cpu"
 
 [tasks."build:image-gpu"]
-run = "make image-gpu"
+description = "Build the CUDA image with Podman"
+run = "sh script/podman.sh build gpu"
 
-[tasks."run:compose-gpu"]
-run = "docker compose -f compose.gpu.yaml up --build"
+[tasks."run:cpu"]
+description = "Run the CPU container with Podman"
+run = "sh script/podman.sh run cpu"
+
+[tasks."run:gpu"]
+description = "Run the CUDA container with NVIDIA CDI"
+run = "sh script/podman.sh run gpu"
+
+[tasks."stop:cpu"]
+description = "Stop the CPU container"
+run = "sh script/podman.sh stop cpu"
+
+[tasks."stop:gpu"]
+description = "Stop the CUDA container"
+run = "sh script/podman.sh stop gpu"
+
+[tasks."logs:cpu"]
+run = "sh script/podman.sh logs cpu"
+
+[tasks."logs:gpu"]
+run = "sh script/podman.sh logs gpu"
 
 [tasks."run:compose-cpu"]
-run = "docker compose -f compose.cpu.yaml up --build"
+description = "Optional Podman Compose CPU startup; requires a Compose provider"
+run = "podman compose -f compose.cpu.yaml up --build"
+
+[tasks."run:compose-gpu"]
+description = "Optional Podman Compose CUDA startup; requires CDI device support"
+run = "podman compose -f compose.gpu.yaml up --build"
 
 [tasks.test]
-run = "make test"
+run = "go test ./..."
+
+[tasks.race]
+run = "go test -race ./..."
+
+[tasks.vet]
+run = "go vet ./..."
+
+[tasks.check]
+description = "Run tests and static analysis"
+depends = ["test", "vet"]
+
+[tasks.bench]
+description = "Benchmark local inference; pass -file /path/to/audio.wav"
+run = "go run ./cmd/stt-bench"
+
+[tasks."bench:cpu"]
+description = "Benchmark the CPU container; pass -file /app/models/audio.wav"
+run = "sh script/podman.sh bench cpu"
+
+[tasks."bench:gpu"]
+description = "Benchmark the CUDA container; pass -file /app/models/audio.wav"
+run = "sh script/podman.sh bench gpu"
+
+[tasks.tools]
+description = "Install the pinned protobuf Go generators"
+run = [
+  "go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.9",
+  "go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1",
+]
+
+[tasks.proto]
+description = "Regenerate protobuf sources; protoc must be installed"
+alias = "build:proto"
+run = 'PATH="$(go env GOPATH)/bin:$PATH" sh script/proto.sh'

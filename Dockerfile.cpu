@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM golang:1.25-bookworm AS build
+FROM docker.io/library/golang:1.25-bookworm AS build
 WORKDIR /src
 ARG GOPROXY=https://proxy.golang.org,direct
 ARG GONOPROXY
@@ -12,7 +12,7 @@ RUN --mount=type=secret,id=proxy_ca \
     if [ -f /run/secrets/proxy_ca ]; then export SSL_CERT_FILE=/run/secrets/proxy_ca GIT_SSL_CAINFO=/run/secrets/proxy_ca; fi; \
     sh script/build.sh
 
-FROM debian:bookworm-slim
+FROM docker.io/library/debian:bookworm-slim
 RUN --mount=type=secret,id=proxy_ca \
     if [ -f /run/secrets/proxy_ca ]; then export APT_CONFIG=/tmp/apt-proxy-ca.conf; printf 'Acquire::https::CaInfo "/run/secrets/proxy_ca";\n' > "$APT_CONFIG"; fi; \
     apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certificates libstdc++6 && \

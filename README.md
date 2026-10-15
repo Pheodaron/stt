@@ -16,24 +16,26 @@ FFmpeg остаётся системной зависимостью для де�
 
 Проверенная платформа: Linux amd64. Упаковка также предусмотрена для Linux arm64,
 но на arm64 проверки не проводились. Нужны Go **1.25.1+**, GCC/G++, FFmpeg,
-make, curl, tar, bzip2 и sha256sum. CGO должен быть включён. Для однократной
+mise, curl, tar, bzip2 и sha256sum. CGO должен быть включён. Для однократной
 конвертации исходных весов нужны также Python 3.10+ с venv/pip и git;
 для работы Go-сервера они не нужны.
 
 ```bash
 # Debian/Ubuntu: sudo apt-get install build-essential ffmpeg curl bzip2
 cp .env.example .env
-make model               # однократный экспорт исходной модели в FP32
-make build               # три программы и нативные библиотеки в bin/
-./bin/stt-server
+mise trust
+mise install
+mise run model               # однократный экспорт исходной модели в FP32
+mise run build               # три программы и нативные библиотеки в bin/
+mise run run
 ```
 
-`make model` использует закреплённые версии GigaAM и экспортера sherpa, явно
+`mise run model` использует закреплённые версии GigaAM и экспортера sherpa, явно
 загружает модель на CPU с `fp16_encoder=False`, сохраняет `encoder.onnx`,
 `decoder.onnx`, `joiner.onnx`, `tokens.txt` и проверяет отсутствие квантованных
 операторов/FP16/BF16 весов. Исходные веса загружаются с
 `cdn.chatwm.opensmodel.sberdevices.ru`; Python-инструменты находятся в `.tools/`
-и не попадают в runtime Docker-образ. Уже подготовленную совместимую FP32-модель
+и не попадают в runtime-образ. Уже подготовленную совместимую FP32-модель
 можно положить в `models/gigaam-v3-fp32` без повторного экспорта.
 
 **Текущий статус:** подготовка экспортера и Go-тесты проверены. Загрузка исходных
@@ -59,62 +61,97 @@ CLIENT_TYPE=websocket ./bin/stt-server
 `-segment-seconds` по умолчанию равен 1. Для каждого одновременного запуска
 используется отдельная временная директория, которая удаляется при завершении.
 
-Можно запускать напрямую через `go run ./cmd/stt-server`, `go run ./cmd/stt-client`
-или `go run ./cmd/stt-bench`. Для переноса собранной программы на другую Linux-машину
+Для запуска без активации mise в shell используйте `mise exec -- go run ./cmd/stt-server`
+и аналогично для клиента или бенчмарка. Для переноса собранной программы на другую Linux-машину
 копируйте **всю папку bin/** с `lib/`; также требуются FFmpeg и совместимая glibc.
 Это приложение с нативными библиотеками, а не статический pure-Go бинарник.
 
-## Docker CPU и CUDA
+## Podman CPU и CUDA
+
+Основной способ работы — задачи **mise** и **Podman 5+**. Mise закрепляет Go
+1.25.1, включает CGO и читает настройки из `.env`. Системные GCC/G++, FFmpeg и
+Podman устанавливаются отдельно. `Makefile` оставлен как набор переходов к mise.
+Docker daemon и Compose для основных задач не нужны.
 
 ```bash
 cp .env.example .env
-make model
-docker compose -f compose.cpu.yaml up --build
+mise trust
+mise install
+mise run model
+mise run build:image-cpu
+mise run run:cpu
 ```
 
-Либо `make image-cpu` и
-`docker run --rm -p 8080:8080 -v "$PWD/models:/app/models:ro" vks-stt-go:cpu`.
-Контейнер запускается непривилегированным пользователем. Модель монтируется с хоста;
-она не скачивается при старте. Каталоги модели должны быть доступны на проход,
-файлы — на чтение пользователю контейнера (скрипт установки задаёт эти права).
+Сервер работает на переднем плане; остановка — Ctrl+C либо `mise run stop:cpu`
+из другого терминала. Логи: `mise run logs:cpu`. Порт хоста берётся из `PORT`
+в `.env`, внутри контейнера используется 8080. Для фонового запуска можно
+использовать необязательные Compose-задачи ниже.
 
-Для NVIDIA GPU (Linux amd64, совместимый драйвер и NVIDIA Container Toolkit):
+Контейнер запускается непривилегированным пользователем. Модель монтируется с
+хоста только для чтения; загрузки при старте нет. Каталоги модели должны быть
+доступны на проход, файлы — на чтение (экспортер задаёт эти права).
+Для SELinux используется общая метка тома `:ro,z`, пригодная для CPU/GPU.
+Образы называются `localhost/vks-stt-go:cpu` и `localhost/vks-stt-go:cuda`;
+базовые образы указаны с полным registry, без запроса выбора registry в Podman.
+
+Для CUDA нужны Linux amd64, NVIDIA GPU, совместимый драйвер и NVIDIA Container
+Toolkit с настроенным **CDI**. Сначала проверьте устройства на хосте:
 
 ```bash
-docker compose -f compose.gpu.yaml up --build
+nvidia-ctk cdi list
+mise run build:image-gpu
+mise run run:gpu
 ```
 
-Используются отдельные **Dockerfile.cpu / Dockerfile.gpu** и
-**compose.cpu.yaml / compose.gpu.yaml**. API и файлы FP32-модели общие.
-В GPU-образе sherpa-onnx 1.13.8, ONNX Runtime 1.28.2 с CUDA 12/cuDNN 9,
-база `nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04`. Go API и нативный sherpa
-закреплены на одной версии. SHA-256 GPU-архива проверяется при сборке.
+`GPU_DEVICE_ID` в `.env` выбирает устройство CDI `nvidia.com/gpu=0` по умолчанию;
+можно задать индекс, GPU UUID или `all`. Go-сервер использует первое видимое
+устройство как CUDA device 0. Задача передаёт GPU через `--device`, отключает
+SELinux-разделение для GPU и исключает повторную инъекцию legacy NVIDIA hook.
+Подготовка CDI и команды диагностики описаны в [docs/cuda.md](docs/cuda.md).
 
-Compose CPU принудительно задаёт `MODEL_PROVIDER=cpu`, Compose GPU — `cuda` и
-`MODEL_PRECISION=fp32`. Переключение — остановить текущий сервис и запустить
-другой Compose-файл; одновременно оба используют один и тот же порт.
-`GPU_DEVICE_ID` в .env выбирает GPU хоста (по умолчанию 0).
+Используются отдельные **Dockerfile.cpu / Dockerfile.gpu**, собираемые Podman.
+В GPU-образе sherpa-onnx 1.13.8, ONNX Runtime 1.28.2, CUDA 12/cuDNN 9;
+база `docker.io/nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04`.
+Go API и нативный sherpa закреплены на одной версии; SHA-256 архива проверяется.
+Переключение: `mise run stop:cpu`, затем `mise run run:gpu`;
+обратно — `stop:gpu` и `run:cpu`. Оба режима используют один порт и FP32-модель.
+Незавершённые буферы при перезапуске не сохраняются.
 
-Модель в обоих случаях загружается **внутри процесса Go-сервера**. При выборе CUDA
-сервер проверяет поддержку CUDA в загруженном ONNX Runtime, доступность драйвера
-и устройства, возможность подключения execution provider. При ошибке сервер
-завершается; автоматического перехода на CPU нет. Это не означает, что каждый
-вспомогательный оператор графа обязан выполняться на GPU.
+Модель загружается **внутри процесса Go-сервера**. При выборе CUDA сервер проверяет
+execution provider, драйвер и устройство. При ошибке он завершается до готовности.
+Вспомогательные операции графа могут исполняться на CPU. CUDA сохраняет FP32;
+`NVIDIA_TF32_OVERRIDE=0` отключает TF32. Точность CPU/GPU требует сравнения
+на ваших записях: побитовое совпадение разных реализаций не гарантируется.
 
-В CUDA-режиме веса остаются FP32 и `NVIDIA_TF32_OVERRIDE=0` отключает TF32.
-FP16/INT8 автоматически не включаются. Численная идентичность CPU и GPU не
-гарантируется разными реализациями операций и требует проверки на ваших данных.
-Подробные команды: [docs/cuda.md](docs/cuda.md).
+При наличии внешнего Compose provider, поддерживающего устройства CDI:
 
-Проверки и ограничения окружения перечислены в [docs/validation.md](docs/validation.md).
-CPU-образ собран и проверен на доступной INT8-модели. CUDA-библиотеки проверены
-на совместимость с Go-бинарником и отказ при отсутствии драйвера. Полная сборка
-GPU-образа ограничена местом на диске; CUDA-инференс требует проверки на GPU.
+```bash
+mise run run:compose-cpu
+mise run run:compose-gpu
+# Для фонового запуска напрямую:
+podman compose -f compose.cpu.yaml up -d --build
+```
+
+Это альтернативный способ управления тем же сервисом. GPU Compose использует
+`devices: nvidia.com/gpu=...`. `deploy.resources` с Docker GPU reservations
+заменён на CDI. Остановите основной контейнер перед запуском через Compose.
+
+Проверки и ограничения окружения: [docs/validation.md](docs/validation.md).
+Ранее CPU-образ проверен на INT8; CUDA-библиотеки — на совместимость C API
+и отказ при отсутствии драйвера. FP32/CUDA-инференс пока не проверен.
 
 ## Конфигурация
 
-`.env` читается из текущей рабочей директории. Переменные процесса имеют приоритет.
-Путь к dotenv-файлу можно задать флагом `stt-server -env /path/to/file`.
+При прямом запуске сервера `.env` читается из текущей рабочей директории;
+переменные процесса имеют приоритет. Путь задаётся флагом
+`stt-server -env /path/to/file`. При запуске через mise файл `.env` сначала
+загружается самим mise и переопределяет одноимённые переменные shell:
+постоянные настройки меняйте в `.env`. Для разового переопределения задавайте
+переменную после mise, например:
+
+```bash
+mise exec -- env GPU_DEVICE_ID=1 sh script/podman.sh run gpu
+```
 
 | Переменная | Значение без .env | Назначение |
 |---|---|---|
@@ -136,23 +173,23 @@ GPU-образа ограничена местом на диске; CUDA-инф�
 | `MAX_SEGMENT_BYTES` | `4194304` | Лимит входного сегмента до base64-кодирования |
 | `MAX_AUDIO_SECONDS` | `25` | Максимальная длительность декодированного сегмента и скользящего окна, 1..25 с |
 | `REQUEST_TIMEOUT` | `60` | Таймаут одного сегмента, включая ожидание свободного обработчика, секунды |
-| `GPU_DEVICE_ID` | `0` | Выбор GPU хоста в compose.gpu.yaml |
+| `GPU_DEVICE_ID` | `0` | Выбор GPU хоста через NVIDIA CDI |
 
 Отдельные пути можно переопределить через `ENCODER_PATH`, `DECODER_PATH`,
 `JOINER_PATH`, `TOKENS_PATH`. По умолчанию это `encoder.onnx`, `decoder.onnx`,
 `joiner.onnx`, `tokens.txt` в `MODEL_DIR`. Обычный экспорт `model.to_onnx()` и
 PyTorch `.ckpt` напрямую не подходят: sherpa требует свои метаданные и интерфейсы
-декодера. Используйте `make model` или официальный экспорт sherpa.
+декодера. Используйте `mise run model` или официальный экспорт sherpa.
 
-Для INT8 отдельно выполните `make model-int8` и задайте
-`MODEL_PRECISION=int8 MODEL_DIR=models/gigaam-v3-int8`. Этот режим не выбран
+Для INT8 отдельно выполните `mise run model:int8` и задайте в `.env`
+`MODEL_PRECISION=int8` и `MODEL_DIR=models/gigaam-v3-int8`. Этот режим не выбран
 по умолчанию: влияние квантования на точность пользовательских записей не измерено.
-`make model-int8` проверяет SHA-256 архива официального sherpa-релиза.
+`mise run model:int8` проверяет SHA-256 архива официального sherpa-релиза.
 
-Локально `make build` упаковывает CPU-библиотеки, `make build-gpu` заменяет их
+Локально `mise run build` упаковывает CPU-библиотеки, `mise run build:local-gpu` заменяет их
 совместимыми CUDA-библиотеками в `bin/lib`. После второго варианта запускайте
-`MODEL_PROVIDER=cuda ./bin/stt-server` на машине с установленными CUDA/cuDNN.
-Повторный `make build` восстанавливает CPU-библиотеки. `MODEL_PROVIDER` сам по себе
+`mise run run:local-gpu` на машине с установленными CUDA/cuDNN.
+Повторный `mise run build` восстанавливает CPU-библиотеки. `MODEL_PROVIDER` сам по себе
 не устанавливает недостающие нативные зависимости.
 
 Инференс не запускается заново отдельным процессом на каждый запрос: модель
@@ -225,18 +262,18 @@ GigaAM RNNT здесь **offline-модель**: потоковый трансп
 ## Проверки и разработка
 
 ```bash
-make test
-make race
-make vet
+mise run test
+mise run race
+mise run vet
 
 # Дополнительный интеграционный тест с настоящими весами и любой речевой записью:
-MODEL_TEST_AUDIO=/absolute/path/to/speech.wav go test -race -v ./internal/gigaam
+MODEL_TEST_AUDIO=/absolute/path/to/speech.wav mise exec -- go test -race -v ./internal/gigaam
 
 # Проверка ожидаемого фрагмента (необязательно):
-MODEL_TEST_AUDIO=/path/to/speech.wav MODEL_TEST_EXPECT='ожидаемые слова' go test -v ./internal/gigaam
+MODEL_TEST_AUDIO=/path/to/speech.wav MODEL_TEST_EXPECT='ожидаемые слова' mise exec -- go test -v ./internal/gigaam
 
 # Измерения на вашем CPU, после одной прогревающей итерации:
-make bench FILE=/path/to/speech.wav
+mise run bench -- -file /path/to/speech.wav
 ```
 
 `stt-bench` выдаёт JSONL: время загрузки, все итерации, медиану и RTF
@@ -246,7 +283,8 @@ make bench FILE=/path/to/speech.wav
 может замедлять работу при лимите CPU в контейнере.
 
 Сгенерированные `.pb.go` уже включены. Для изменения proto нужны `protoc` и
-плагины из `make tools` (добавьте `$(go env GOPATH)/bin` в PATH), затем `make proto`.
+плагины из `mise run tools`, затем `mise run proto`. Задача сама добавляет
+`$(go env GOPATH)/bin` в PATH для генераторов.
 
 Структура: `cmd/stt-server`, `cmd/stt-client`, `cmd/stt-bench`; `internal/audio`
 (FFmpeg и VAD), `internal/gigaam` (пул recognizer), `internal/stt` (сессии и буфер),

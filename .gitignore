@@ -5,3 +5,5 @@ models/*
 *.test
 coverage.out
 .tools/
+mise.local.toml
+mise.*.local.toml
