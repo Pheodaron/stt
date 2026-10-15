@@ -6,6 +6,75 @@ run = "podman build --file Dockerfile.cpu --tag localhost/vks-stt-go:cpu ."
 description = "Build the CUDA container with Podman"
 run = "podman build --file Dockerfile.gpu --tag localhost/vks-stt-go:cuda ."
 
+[tasks.init]
+description = "Create .env without overwriting existing settings"
+run = "test -f .env || cp .env.example .env"
+
+[tasks."model:prepare"]
+description = "Download original GigaAM weights and export sherpa-compatible FP32 ONNX"
+tools.python = "3.11.13"
+run = "sh script/export-model-fp32.sh"
+
+[tasks."model:check"]
+description = "Check that the four required model files exist"
+run = '''
+for file in encoder.onnx decoder.onnx joiner.onnx tokens.txt; do
+  path="models/gigaam-v3-fp32/$file"
+  if [ ! -s "$path" ] || [ ! -r "$path" ]; then
+    echo "Missing or unreadable model file: $path; run mise run model:prepare" >&2
+    exit 1
+  fi
+done
+echo "FP32 model files are present; inference quality is not checked by this task."
+'''
+
+[tasks."run:cpu"]
+description = "Run the CPU server in the foreground with Podman"
+depends = ["model:check"]
+run = '''
+if [ ! -f .env ]; then
+  echo "Create the configuration first: mise run init" >&2
+  exit 1
+fi
+exec podman run --rm --init --pull=never --name vks-stt \
+  --env-file .env \
+  --env URL=0.0.0.0 --env PORT=8080 \
+  --env MODEL_PROVIDER=cpu --env MODEL_PRECISION=fp32 \
+  --env MODEL_DIR=/app/models/gigaam-v3-fp32 \
+  --publish "${HOST_PORT:-8080}:8080" \
+  --volume "$PWD/models:/app/models:ro,z" \
+  localhost/vks-stt-go:cpu
+'''
+
+[tasks."run:gpu"]
+description = "Run the CUDA server in the foreground with NVIDIA CDI"
+depends = ["model:check"]
+run = '''
+if [ ! -f .env ]; then
+  echo "Create the configuration first: mise run init" >&2
+  exit 1
+fi
+exec podman run --rm --init --pull=never --name vks-stt \
+  --env-file .env \
+  --env URL=0.0.0.0 --env PORT=8080 \
+  --env MODEL_PROVIDER=cuda --env MODEL_PRECISION=fp32 \
+  --env MODEL_DIR=/app/models/gigaam-v3-fp32 \
+  --env NVIDIA_VISIBLE_DEVICES=void \
+  --device "nvidia.com/gpu=${GPU_DEVICE_ID:-0}" \
+  --security-opt label=disable \
+  --publish "${HOST_PORT:-8080}:8080" \
+  --volume "$PWD/models:/app/models:ro,z" \
+  localhost/vks-stt-go:cuda
+'''
+
+[tasks.logs]
+description = "Follow the running server logs"
+run = "podman logs --follow vks-stt"
+
+[tasks.stop]
+description = "Stop the server; the container is removed automatically"
+run = "podman stop --time 15 vks-stt"
+
 [tasks.proto]
 description = "Regenerate Go protobuf sources"
 tools.go = "1.25.1"

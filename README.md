@@ -1,17 +1,122 @@
 # VKS STT — Go + sherpa-onnx
 
 Сервис распознавания GigaAM v3 E2E RNNT на Go. Модель работает внутри процесса
-через sherpa-onnx и ONNX Runtime. По умолчанию используются FP32-веса без
-квантования. Python и отдельный inference-сервис при распознавании не нужны.
-FFmpeg и нативные библиотеки входят в контейнер.
+через sherpa-onnx и ONNX Runtime. CPU и CUDA используют одну FP32-модель без
+квантования; приоритет — качество распознавания. Python нужен только для
+однократного экспорта весов. В контейнере работают Go-сервер, FFmpeg и нативные
+библиотеки; отдельного inference-сервиса нет.
 
-## Сборка
+## Что потребуется
 
-Нужны mise и Podman. Go, компилятор и зависимости устанавливаются внутри
-build-stage контейнера.
+Гайд рассчитан на Linux amd64 и Podman 5+ с настроенным rootless-запуском.
+CPU-образ также предусматривает Linux arm64, но эта платформа не проверялась.
+Для CUDA нужны Linux amd64, NVIDIA GPU, совместимый с CUDA 12.8 драйвер
+и NVIDIA Container Toolkit с CDI.
+
+На хосте установите:
+
+- [mise](https://mise.jdx.dev/getting-started.html) и [Podman](https://podman.io/docs/installation);
+- git, curl, tar, bzip2 и sha256sum; для примеров распознавания — GNU base64;
+- доступ к GitHub, PyPI, `download.pytorch.org`, registry Docker Hub и
+  `cdn.chatwm.opensmodel.sberdevices.ru` для оригинальных весов GigaAM;
+- доступ к `mise-versions.jdx.dev` для метаданных устанавливаемого Python.
+
+Go, GCC/G++ и FFmpeg для сервера устанавливаются внутри build-stage и runtime
+образов. Python 3.11.13 mise предоставляет только задаче подготовки модели,
+Go 1.25.1 — только генерации protobuf. Сборка контейнеров не устанавливает Go
+или Python на хост. Нужен запас диска для Python/PyTorch, checkpoint, ONNX
+и контейнерных слоёв; CUDA-образ заметно больше CPU-образа.
+
+Проверьте установленный Podman:
 
 ```bash
+mise --version
+podman --version
+podman info
+```
+
+## Быстрый старт на CPU
+
+Клонирование текущей ветки проекта:
+
+```bash
+git clone --branch work https://github.com/Pheodaron/stt.git
+cd stt
 mise trust
+mise run init
+mise run model:prepare
+mise run build:cpu
+mise run run:cpu
+```
+
+`init` создаёт `.env` из `.env.example`, сохраняя уже существующий файл.
+`model:prepare` скачивает оригинальные веса и экспортирует их в ONNX FP32.
+Первый запуск требует сети и занимает больше времени из-за установки Python,
+PyTorch и экспорта. `build:cpu` собирает образ через Podman.
+`run:cpu` проверяет наличие модели и запускает gRPC-сервер на `localhost:8080`.
+
+Контейнер работает на переднем плане. Дождитесь сообщения `ready` в логах:
+это означает, что модель загружена и сервер начал слушать порт.
+Остановка — Ctrl+C или `mise run stop` из другого терминала.
+
+## Подготовка FP32-модели
+
+```bash
+mise run model:prepare
+mise run model:check
+```
+
+Скрипт [export-model-fp32.sh](script/export-model-fp32.sh) выполняет весь цикл:
+
+1. Загружает закреплённый exporter sherpa и проверяет его SHA-256.
+2. Создаёт Python venv в `.tools/gigaam-export` и устанавливает CPU PyTorch 2.8.0,
+   torchaudio 2.8.0 и закреплённую ревизию GigaAM.
+3. Загружает checkpoint `v3_e2e_rnnt` и tokenizer в `.tools/gigaam-checkpoints`.
+4. Экспортирует `encoder`, `decoder`, `joiner` для sherpa-onnx с FP32-весами.
+5. Проверяет отсутствие квантованных операций и FP16/BF16-инициализаторов,
+   сохраняет описание точности и лицензию.
+
+Результат:
+
+```text
+models/gigaam-v3-fp32/
+  encoder.onnx
+  decoder.onnx
+  joiner.onnx
+  tokens.txt
+  precision.json
+  LICENSE
+```
+
+Один набор файлов подходит обоим образам. Повторный `model:prepare` пропускает
+экспорт, если все шесть выходных файлов уже существуют и не пусты.
+`model:check` проверяет наличие и читаемость четырёх runtime-файлов;
+он не выполняет распознавание и не измеряет качество.
+
+Если у вас уже есть совместимый FP32-экспорт sherpa, положите четыре runtime-файла
+в этот каталог и пропустите `model:prepare`. PyTorch `.ckpt` и произвольный
+ONNX-экспорт напрямую серверу не подходят. Для повторного экспорта сначала
+переместите существующий каталог модели в резервную копию.
+
+Checkpoint и tokenizer загружаются с:
+
+- `https://cdn.chatwm.opensmodel.sberdevices.ru/GigaAM/v3_e2e_rnnt.ckpt`;
+- `https://cdn.chatwm.opensmodel.sberdevices.ru/GigaAM/v3_e2e_rnnt_tokenizer.model`.
+
+Уже скачанные исходные файлы можно поместить в `.tools/gigaam-checkpoints`
+с этими именами. Для другого каталога кеша:
+
+```bash
+GIGAAM_CACHE_DIR=/path/to/checkpoints mise run model:prepare
+```
+
+Каталоги `.tools` и `models` исключены из Git и контекста сборки образов.
+Скачивание INT8 не поддерживается. Обоснование выбора инференса:
+[docs/cpu-inference.md](docs/cpu-inference.md).
+
+## Сборка образов
+
+```bash
 mise run build:cpu
 mise run build:gpu
 ```
@@ -21,49 +126,151 @@ mise run build:gpu
 | `build:cpu` | `Dockerfile.cpu` | `localhost/vks-stt-go:cpu` |
 | `build:gpu` | `Dockerfile.gpu` | `localhost/vks-stt-go:cuda` |
 
-Оба образа содержат только Go-сервер, нативные библиотеки и FFmpeg.
-Конфигурация и файлы модели не включаются в образ. Сборка не требует `.env`,
-весов модели или NVIDIA GPU. Для использования CUDA-образа нужны Linux amd64,
-совместимый NVIDIA-драйвер и настроенный NVIDIA CDI.
+Сборка не требует `.env`, весов модели или NVIDIA GPU. Исходники компилируются
+в build-stage; итоговый образ содержит только сервер, FFmpeg и нативные библиотеки.
+Модель монтируется с хоста и не скачивается при старте контейнера.
+Для изменения кода пересоберите соответствующий образ и перезапустите контейнер.
 
-## Модель
+## Запуск и управление
 
-Оба образа используют одну совместимую с sherpa-onnx GigaAM v3 E2E RNNT FP32:
+Для CPU:
 
-```text
-models/gigaam-v3-fp32/
-  encoder.onnx
-  decoder.onnx
-  joiner.onnx
-  tokens.txt
+```bash
+mise run run:cpu
 ```
 
-При развёртывании каталог models монтируется в `/app/models` только для чтения.
-Файлы должны быть доступны пользователю контейнера UID 65532.
-Модель загружается при старте; контейнер её не скачивает.
-Обычный PyTorch checkpoint или произвольный ONNX-экспорт напрямую не подходят.
+Из другого терминала:
 
-Для однократной подготовки исходных FP32-весов сохранён
-[экспортер](script/export-model-fp32.sh), закреплённый на версиях GigaAM и sherpa.
-Он требует Python только при конвертации и проверяет отсутствие квантованных
-операторов и FP16/BF16-весов. Скачивание INT8-модели удалено.
-Обоснование выбора инференса: [docs/cpu-inference.md](docs/cpu-inference.md).
+```bash
+mise run logs
+mise run stop
+```
+
+Оба варианта используют имя контейнера `vks-stt`; одновременно запускается один
+вариант. После остановки контейнер удаляется автоматически, а модель и `.env`
+остаются на хосте. Логи доступны, пока контейнер существует.
+Задачи не запускают сервис при загрузке ОС; для этого нужна отдельная настройка
+Podman/systemd на целевом хосте.
+
+Другой порт хоста:
+
+```bash
+HOST_PORT=9090 mise run run:cpu
+```
+
+Внутри контейнера всегда используется порт 8080. Меняйте `HOST_PORT`, а не
+`PORT` в `.env`, если нужно изменить порт публикации.
+
+Контейнер работает под UID 65532 и читает `models` через read-only mount.
+Для SELinux используется `:ro,z`, чтобы каталог подходил обоим образам.
+У подготовленной скриптом модели уже есть нужные права. Для вручную перенесённой
+модели при ошибке чтения проверьте права каталогов и файлов.
+
+## Запуск с NVIDIA CUDA
+
+Установите драйвер и NVIDIA Container Toolkit по
+[инструкции NVIDIA](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
+Проверьте драйвер и доступные устройства CDI:
+
+```bash
+nvidia-smi
+nvidia-ctk cdi list
+```
+
+В списке должно быть устройство вида `nvidia.com/gpu=0`. Современный Toolkit
+может обновлять CDI через `nvidia-cdi-refresh`. Если автоматическая генерация
+не настроена и CDI-спецификации ещё нет, создайте её:
+
+```bash
+sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+nvidia-ctk cdi list
+```
+
+Не создавайте дубликат уже существующей автоматической спецификации.
+После смены драйвера или GPU обновите спецификацию выбранным способом.
+Rootless-пользователь должен иметь доступ к устройствам NVIDIA.
+
+Соберите CUDA-образ. Если CPU-сервер запущен, сначала остановите его командой
+`mise run stop` из другого терминала, затем запустите CUDA:
+
+```bash
+mise run build:gpu
+mise run run:gpu
+```
+
+По умолчанию выбирается GPU 0. Другой индекс или UUID из `nvidia-ctk cdi list`:
+
+```bash
+GPU_DEVICE_ID=1 mise run run:gpu
+# Либо UUID:
+GPU_DEVICE_ID=GPU-your-uuid mise run run:gpu
+```
+
+Индекс/UUID задаётся без префикса `nvidia.com/gpu=` — задача добавляет его сама.
+Go-сервер использует первое видимое устройство как CUDA device 0.
+`GPU_DEVICE_ID` и `HOST_PORT` — переменные команды mise, они не читаются из `.env`.
+
+Задача передаёт устройство через CDI, использует `--security-opt label=disable`
+для доступа к GPU при SELinux и `NVIDIA_VISIBLE_DEVICES=void`, исключая повторную
+инъекцию через legacy NVIDIA hook. Веса остаются FP32, TF32 отключён через
+`NVIDIA_TF32_OVERRIDE=0`. При отсутствии execution provider, драйвера или устройства
+сервер завершится до готовности; режим CPU не подставляется автоматически.
+
+Обратно на CPU: `mise run stop`, затем `mise run run:cpu`.
+Детали версий библиотек: [docs/cuda.md](docs/cuda.md).
+
+## Проверка сервиса
+
+По умолчанию используется gRPC. Если установлен `grpcurl`, проверьте готовность:
+
+```bash
+grpcurl -plaintext -d '{}' localhost:8080 grpc.health.v1.Health/Check
+```
+
+Ожидаемый статус — `SERVING`. Reflection позволяет посмотреть API:
+
+```bash
+grpcurl -plaintext localhost:8080 list
+```
+
+Для настоящего распознавания возьмите файл речи длиной не более 25 секунд
+и размером не более `MAX_SEGMENT_BYTES`. Подходят, например, WAV или Ogg/Opus:
+
+```bash
+printf '{"segment":"%s"}\n' "$(base64 -w0 recording.ogg)" | \
+  grpcurl -plaintext -d @ localhost:8080 Gigaam/transcribe_unbuffered
+```
+
+Унарный метод возвращает текст в поле `partial` — это сохранённый контракт API.
+
+Для WebSocket задайте `CLIENT_TYPE=websocket` в `.env` и перезапустите сервер:
+
+```bash
+mise run stop
+mise run run:cpu
+# В другом терминале:
+curl --fail http://localhost:8080/healthz
+```
+
+`/healthz` существует только в режиме WebSocket. Для gRPC используйте Health Check.
+При другом `HOST_PORT` замените порт во всех клиентских командах.
 
 ## Конфигурация контейнера
 
 Параметры передаются через переменные окружения; пример — [.env.example](.env.example).
-Файл можно передать Podman через `--env-file`; приложение само `.env` не читает.
-CPU-образ по умолчанию выбирает `MODEL_PROVIDER=cpu`, CUDA-образ — `cuda`.
-Пример env-файла не переопределяет provider, заданный в образе.
+Задачи `run:cpu` и `run:gpu` передают `.env` в Podman; приложение само файл не читает.
+Они явно задают provider, FP32, каталог `/app/models/gigaam-v3-fp32`, адрес
+`0.0.0.0` и внутренний порт `8080`. Остальные параметры берутся из `.env`.
+После изменения файла остановите контейнер и запустите его снова.
 
 | Переменная | По умолчанию | Назначение |
 |---|---|---|
 | `URL` | `0.0.0.0` | Адрес прослушивания |
 | `PORT` | `8080` | Порт внутри контейнера |
 | `CLIENT_TYPE` | `grpc` | `grpc` или `websocket` |
-| `MODEL_PROVIDER` | Зависит от образа | `cpu` или `cuda` |
+| `MODEL_PROVIDER` | Зависит от задачи | `cpu` или `cuda` |
 | `MODEL_PRECISION` | `fp32` | Точность весов; CUDA требует FP32 |
-| `MODEL_DIR` | `models/gigaam-v3-fp32` | Каталог модели относительно `/app` |
+| `MODEL_DIR` | `/app/models/gigaam-v3-fp32` | Каталог модели внутри контейнера |
 | `NUM_THREADS` | `2` | Потоки ONNX Runtime |
 | `MODEL_WORKERS` | `1` | Экземпляры модели, каждый занимает отдельную память |
 | `BUFFER_SIZE` | `10` | Сегменты в окне; в примере — 4 |
@@ -128,9 +335,33 @@ mise run proto
 Go-генераторы закреплены директивой `tool` в `go.mod`: `protoc-gen-go` 1.36.9
 и `protoc-gen-go-grpc` 1.5.1. Задача получает их пути через `go tool -n`;
 глобальная установка плагинов не нужна. При необходимости установить все
-закреплённые инструменты отдельно можно командой `go install tool`.
+закреплённые инструменты отдельно:
+
+```bash
+mise exec go@1.25.1 -- go install tool
+```
+
+Если Go уже в PATH, достаточно `go install tool`.
 Сгенерированные Go-файлы уже включены в репозиторий.
 
-Устройство CUDA-образа: [docs/cuda.md](docs/cuda.md).
-Выполненные проверки и ограничения: [docs/validation.md](docs/validation.md).
+## Диагностика
+
+| Симптом | Что проверить |
+|---|---|
+| `Missing or unreadable model file` | Выполните `mise run model:prepare` либо поместите готовый совместимый FP32-экспорт в `models/gigaam-v3-fp32` |
+| HTTP 403 или ошибка загрузки весов | Доступ к домену GigaAM и правилам корпоративного proxy; уже скачанные checkpoint/tokenizer можно передать через кеш |
+| Ошибка Python venv/pip | Установку task-tool Python через mise, доступ к PyPI/PyTorch, свободное место |
+| `image not known` / образ не найден | Соберите нужный образ через `build:cpu` или `build:gpu`; запуск использует только локальный образ |
+| Имя `vks-stt` занято | Завершите прежний сервис через `mise run stop`; оставшийся сторонний контейнер сначала проверьте через `podman ps -a` |
+| Порт занят | Остановите другой сервис или задайте `HOST_PORT` |
+| Ошибка чтения ONNX в контейнере | Права чтения UID 65532, проход по каталогам и SELinux-метки тома |
+| Нет CDI-устройства / драйвера | `nvidia-smi`, `nvidia-ctk cdi list`, доступ пользователя к GPU и совместимость драйвера |
+| Нехватка диска при сборке | `podman system df`, место для слоёв и особенности storage driver; проверьте данные перед очисткой |
+
+Состояние проверок: Go-тесты и CPU-инференс на доступных INT8-весах проверены.
+Оригинальные FP32-веса в рабочем окружении недоступны из-за сетевой политики,
+поэтому полный FP32-экспорт и инференс пока не проверены. Podman/CDI и
+CUDA-инференс также требуют проверки на целевом хосте.
+Подробности: [docs/validation.md](docs/validation.md).
+
 Лицензии: [THIRD_PARTY.md](THIRD_PARTY.md).

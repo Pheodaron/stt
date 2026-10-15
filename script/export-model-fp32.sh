@@ -8,7 +8,14 @@ case "$destination" in
   /*) ;;
   *) destination="$project_dir/$destination" ;;
 esac
-if [ -s "$destination/encoder.onnx" ] && [ -s "$destination/decoder.onnx" ] && [ -s "$destination/joiner.onnx" ] && [ -s "$destination/tokens.txt" ]; then
+complete=1
+for file in encoder.onnx decoder.onnx joiner.onnx tokens.txt precision.json LICENSE; do
+  if [ ! -s "$destination/$file" ]; then
+    complete=0
+    break
+  fi
+done
+if [ "$complete" = 1 ]; then
   echo "FP32 model already exists in $destination"
   exit 0
 fi
