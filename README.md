@@ -70,7 +70,7 @@ CLIENT_TYPE=websocket ./bin/stt-server
 
 Основной способ работы — задачи **mise** и **Podman 5+**. Mise закрепляет Go
 1.25.1, включает CGO и читает настройки из `.env`. Системные GCC/G++, FFmpeg и
-Podman устанавливаются отдельно. `Makefile` оставлен как набор переходов к mise.
+Podman устанавливаются отдельно. Все команды проекта заданы в `mise.toml`.
 Docker daemon и Compose для основных задач не нужны.
 
 ```bash
