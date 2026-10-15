@@ -1,0 +1,13 @@
+services:
+  stt:
+    image: localhost/vks-stt-go:cuda
+    build:
+      dockerfile: Dockerfile.gpu
+    environment:
+      MODEL_PROVIDER: cuda
+      NVIDIA_VISIBLE_DEVICES: void
+      NVIDIA_TF32_OVERRIDE: "0"
+    devices:
+      - "nvidia.com/gpu=${GPU_DEVICE_ID:-0}"
+    security_opt:
+      - label=disable

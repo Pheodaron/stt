@@ -15,7 +15,8 @@ CPU-образ также предусматривает Linux arm64, но эт�
 
 На хосте установите:
 
-- [mise](https://mise.jdx.dev/getting-started.html) и [Podman](https://podman.io/docs/installation);
+- [mise](https://mise.jdx.dev/getting-started.html) и [Podman](https://podman.io/docs/installation), а также Compose provider
+  `podman-compose` версии 1.3+;
 - git, curl, tar, bzip2 и sha256sum; для примеров распознавания — GNU base64;
 - доступ к GitHub, PyPI, `download.pytorch.org`, registry Docker Hub и
   `cdn.chatwm.opensmodel.sberdevices.ru` для оригинальных весов GigaAM;
@@ -27,12 +28,25 @@ Go 1.25.1 — только генерации protobuf. Сборка конте�
 или Python на хост. Нужен запас диска для Python/PyTorch, checkpoint, ONNX
 и контейнерных слоёв; CUDA-образ заметно больше CPU-образа.
 
-Проверьте установленный Podman:
+Если provider ещё не установлен, установите `podman-compose` через пакетный
+менеджер дистрибутива или через уже установленный pipx:
+
+```bash
+pipx install 'podman-compose>=1.3'
+pipx ensurepath
+```
+
+После `ensurepath` откройте новый терминал. Mise по умолчанию задаёт
+`PODMAN_COMPOSE_PROVIDER=podman-compose`; при необходимости эту переменную
+можно переопределить в окружении. Docker daemon не требуется.
+
+Проверьте установленный Podman и provider:
 
 ```bash
 mise --version
 podman --version
 podman info
+podman-compose --version
 ```
 
 ## Быстрый старт на CPU
@@ -57,7 +71,8 @@ PyTorch и экспорта. `build:cpu` собирает образ через 
 
 Контейнер работает на переднем плане. Дождитесь сообщения `ready` в логах:
 это означает, что модель загружена и сервер начал слушать порт.
-Остановка — Ctrl+C или `mise run stop` из другого терминала.
+Ctrl+C останавливает сервис. `mise run stop` останавливает его и удаляет
+контейнер вместе с сетью Compose.
 
 ## Подготовка FP32-модели
 
@@ -146,9 +161,21 @@ mise run logs
 mise run stop
 ```
 
-Оба варианта используют имя контейнера `vks-stt`; одновременно запускается один
-вариант. После остановки контейнер удаляется автоматически, а модель и `.env`
-остаются на хосте. Логи доступны, пока контейнер существует.
+Общая конфигурация CPU находится в `compose.yaml`, CUDA добавляется через
+`compose.gpu.yaml`. В mise остались короткие вызовы `podman compose`.
+Оба варианта используют проект и контейнер `vks-stt`; одновременно запускается
+один вариант. Ctrl+C оставляет остановленный контейнер, `mise run stop`
+выполняет Compose down и удаляет контейнер и сеть. Модель и `.env` сохраняются
+на хосте. Логи доступны, пока контейнер существует.
+
+Для фонового запуска:
+
+```bash
+mise run run:cpu -- --detach
+# Либо CUDA:
+mise run run:gpu -- --detach
+```
+
 Задачи не запускают сервис при загрузке ОС; для этого нужна отдельная настройка
 Podman/systemd на целевом хосте.
 
@@ -159,7 +186,8 @@ HOST_PORT=9090 mise run run:cpu
 ```
 
 Внутри контейнера всегда используется порт 8080. Меняйте `HOST_PORT`, а не
-`PORT` в `.env`, если нужно изменить порт публикации.
+`PORT` в `.env`, если нужно изменить порт публикации. `HOST_PORT` также можно
+сохранить в `.env`; переменная команды имеет приоритет над файлом.
 
 Контейнер работает под UID 65532 и читает `models` через read-only mount.
 Для SELinux используется `:ro,z`, чтобы каталог подходил обоим образам.
@@ -206,11 +234,12 @@ GPU_DEVICE_ID=1 mise run run:gpu
 GPU_DEVICE_ID=GPU-your-uuid mise run run:gpu
 ```
 
-Индекс/UUID задаётся без префикса `nvidia.com/gpu=` — задача добавляет его сама.
+Индекс/UUID задаётся без префикса `nvidia.com/gpu=` — CUDA-конфигурация добавляет его сама.
 Go-сервер использует первое видимое устройство как CUDA device 0.
-`GPU_DEVICE_ID` и `HOST_PORT` — переменные команды mise, они не читаются из `.env`.
+`GPU_DEVICE_ID` и `HOST_PORT` читает Compose: значения можно задать в `.env`
+или переменными команды, как в примерах выше. Переменные команды имеют приоритет.
 
-Задача передаёт устройство через CDI, использует `--security-opt label=disable`
+Compose передаёт устройство через CDI, использует `security_opt: label=disable`
 для доступа к GPU при SELinux и `NVIDIA_VISIBLE_DEVICES=void`, исключая повторную
 инъекцию через legacy NVIDIA hook. Веса остаются FP32, TF32 отключён через
 `NVIDIA_TF32_OVERRIDE=0`. При отсутствии execution provider, драйвера или устройства
@@ -258,9 +287,10 @@ curl --fail http://localhost:8080/healthz
 ## Конфигурация контейнера
 
 Параметры передаются через переменные окружения; пример — [.env.example](.env.example).
-Задачи `run:cpu` и `run:gpu` передают `.env` в Podman; приложение само файл не читает.
-Они явно задают provider, FP32, каталог `/app/models/gigaam-v3-fp32`, адрес
-`0.0.0.0` и внутренний порт `8080`. Остальные параметры берутся из `.env`.
+Задачи `run:cpu` и `run:gpu` запускают Compose, который передаёт `.env`
+в контейнер; приложение само файл не читает. YAML-конфигурация явно задаёт
+provider, FP32, каталог `/app/models/gigaam-v3-fp32`, адрес `0.0.0.0`
+и внутренний порт `8080`. Остальные параметры сервера берутся из `.env`.
 После изменения файла остановите контейнер и запустите его снова.
 
 | Переменная | По умолчанию | Назначение |
@@ -352,6 +382,7 @@ mise exec go@1.25.1 -- go install tool
 | HTTP 403 или ошибка загрузки весов | Доступ к домену GigaAM и правилам корпоративного proxy; уже скачанные checkpoint/tokenizer можно передать через кеш |
 | Ошибка Python venv/pip | Установку task-tool Python через mise, доступ к PyPI/PyTorch, свободное место |
 | `image not known` / образ не найден | Соберите нужный образ через `build:cpu` или `build:gpu`; запуск использует только локальный образ |
+| Compose provider не найден | Установите `podman-compose` 1.3+ и проверьте его наличие в PATH |
 | Имя `vks-stt` занято | Завершите прежний сервис через `mise run stop`; оставшийся сторонний контейнер сначала проверьте через `podman ps -a` |
 | Порт занят | Остановите другой сервис или задайте `HOST_PORT` |
 | Ошибка чтения ONNX в контейнере | Права чтения UID 65532, проход по каталогам и SELinux-метки тома |

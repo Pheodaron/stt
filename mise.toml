@@ -1,3 +1,6 @@
+[env]
+PODMAN_COMPOSE_PROVIDER = { default = "podman-compose" }
+
 [tasks."build:cpu"]
 description = "Build the CPU container with Podman"
 run = "podman build --file Dockerfile.cpu --tag localhost/vks-stt-go:cpu ."
@@ -29,51 +32,22 @@ echo "FP32 model files are present; inference quality is not checked by this tas
 '''
 
 [tasks."run:cpu"]
-description = "Run the CPU server in the foreground with Podman"
+description = "Run the CPU server with Podman Compose"
 depends = ["model:check"]
-run = '''
-if [ ! -f .env ]; then
-  echo "Create the configuration first: mise run init" >&2
-  exit 1
-fi
-exec podman run --rm --init --pull=never --name vks-stt \
-  --env-file .env \
-  --env URL=0.0.0.0 --env PORT=8080 \
-  --env MODEL_PROVIDER=cpu --env MODEL_PRECISION=fp32 \
-  --env MODEL_DIR=/app/models/gigaam-v3-fp32 \
-  --publish "${HOST_PORT:-8080}:8080" \
-  --volume "$PWD/models:/app/models:ro,z" \
-  localhost/vks-stt-go:cpu
-'''
+run = "podman compose -f compose.yaml up --no-build"
 
 [tasks."run:gpu"]
-description = "Run the CUDA server in the foreground with NVIDIA CDI"
+description = "Run the CUDA server with Podman Compose and NVIDIA CDI"
 depends = ["model:check"]
-run = '''
-if [ ! -f .env ]; then
-  echo "Create the configuration first: mise run init" >&2
-  exit 1
-fi
-exec podman run --rm --init --pull=never --name vks-stt \
-  --env-file .env \
-  --env URL=0.0.0.0 --env PORT=8080 \
-  --env MODEL_PROVIDER=cuda --env MODEL_PRECISION=fp32 \
-  --env MODEL_DIR=/app/models/gigaam-v3-fp32 \
-  --env NVIDIA_VISIBLE_DEVICES=void \
-  --device "nvidia.com/gpu=${GPU_DEVICE_ID:-0}" \
-  --security-opt label=disable \
-  --publish "${HOST_PORT:-8080}:8080" \
-  --volume "$PWD/models:/app/models:ro,z" \
-  localhost/vks-stt-go:cuda
-'''
+run = "podman compose -f compose.yaml -f compose.gpu.yaml up --no-build"
 
 [tasks.logs]
-description = "Follow the running server logs"
-run = "podman logs --follow vks-stt"
+description = "Follow the server logs"
+run = "podman compose -f compose.yaml logs --follow stt"
 
 [tasks.stop]
-description = "Stop the server; the container is removed automatically"
-run = "podman stop --time 15 vks-stt"
+description = "Remove the server container and Compose network"
+run = "podman compose -f compose.yaml down --timeout 15"
 
 [tasks.proto]
 description = "Regenerate Go protobuf sources"
