@@ -11,7 +11,7 @@
 | NVIDIA CUDA / cuDNN (GPU-образ) | [лицензии NVIDIA](https://docs.nvidia.com/cuda/eula/index.html); отдельны от лицензии проекта |
 | GigaAM и экспорт модели | [MIT](https://github.com/salute-developers/GigaAM/blob/main/LICENSE), LICENSE также скачивается вместе с моделью |
 | PyTorch / torchaudio (только однократный экспорт) | [PyTorch BSD](https://github.com/pytorch/pytorch/blob/main/LICENSE), [torchaudio BSD](https://github.com/pytorch/audio/blob/main/LICENSE) |
-| WebRTC VAD Go binding | [MIT](https://github.com/maxhawkins/go-webrtcvad/blob/master/LICENSE); встроенный WebRTC сохраняет свои BSD-уведомления |
+| Silero VAD v6.2.3 FP32 ONNX | [MIT](https://github.com/snakers4/silero-vad/blob/v6.2.3/LICENSE); `vad:prepare` сохраняет LICENSE рядом с весами |
 | gRPC Go | [Apache-2.0](https://github.com/grpc/grpc-go/blob/master/LICENSE) |
 | protobuf Go | [BSD-3-Clause](https://github.com/protocolbuffers/protobuf-go/blob/master/LICENSE) |
 | Gorilla WebSocket | [BSD-2-Clause](https://github.com/gorilla/websocket/blob/main/LICENSE) |

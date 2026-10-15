@@ -1,103 +1,53 @@
 package stt
 
-import (
-	"strings"
+import "vks-stt-v2/internal/audio"
 
-	"vks-stt-v2/internal/audio"
-)
-
-// Buffer retains the tail of the last committed chunk as context for the next window.
+// Buffer never cuts an uncommitted phrase or removes its trailing samples.
+// Committed audio contributes a short overlap to the next recognition window.
 type Buffer struct {
-	chunks     []audio.Chunk
-	size       int
-	frameBytes int
-	maxBytes   int
+	pcm       []byte
+	size      int
+	count     int
+	maxBytes  int
+	overlap   int
+	committed bool
 }
 
-func NewBuffer(size, frameMS, maxSeconds int) *Buffer {
+func NewBuffer(size, maxSeconds, overlapMS int) *Buffer {
 	return &Buffer{
-		size:       size,
-		frameBytes: audio.SampleRate * frameMS / 1000 * 2,
-		maxBytes:   maxSeconds * audio.SampleRate * 2,
+		size:     size,
+		maxBytes: maxSeconds * audio.SampleRate * 2,
+		overlap:  overlapMS * audio.SampleRate / 1000 * 2,
 	}
 }
 
-func (b *Buffer) Add(chunk audio.Chunk) {
-	if b.Full() {
-		b.retainTail()
+// Add returns a window that must be recognized and committed before the new
+// audio. A duration limit must never silently discard uncommitted samples.
+func (b *Buffer) Add(pcm []byte) (sealed []byte) {
+	if b.committed {
+		b.retainOverlap(len(pcm))
+	} else if len(b.pcm)+len(pcm) > b.maxBytes {
+		sealed = b.pcm
+		b.retainOverlap(len(pcm))
 	}
-
-	b.chunks = append(b.chunks, audio.Chunk{
-		PCM: append([]byte(nil), chunk.PCM...),
-		Map: chunk.Map,
-	})
-	b.trimToLimit()
+	b.pcm = append(b.pcm, pcm...)
+	b.count++
+	return sealed
 }
 
-func (b *Buffer) retainTail() {
-	last := b.chunks[len(b.chunks)-1]
-	if position := boundary(last.Map); position >= 0 {
-		last.PCM = last.PCM[position*b.frameBytes:]
-		last.Map = last.Map[position:]
-	}
-
-	b.chunks = nil
-	if b.size > 1 {
-		b.chunks = append(b.chunks, last)
-	}
+func (b *Buffer) retainOverlap(incoming int) {
+	keep := min(len(b.pcm), b.overlap, max(0, b.maxBytes-incoming))
+	b.pcm = append([]byte(nil), b.pcm[len(b.pcm)-keep:]...)
+	b.count = 0
+	b.committed = false
 }
 
-// Keep the sliding window within the model's maximum audio duration.
-func (b *Buffer) trimToLimit() {
-	total := 0
-	for _, c := range b.chunks {
-		total += len(c.PCM)
-	}
-
-	for total > b.maxBytes && len(b.chunks) > 0 {
-		excess := total - b.maxBytes
-		first := &b.chunks[0]
-		if len(first.PCM) <= excess {
-			total -= len(first.PCM)
-			b.chunks = b.chunks[1:]
-			continue
-		}
-
-		frames := (excess + b.frameBytes - 1) / b.frameBytes
-		cut := frames * b.frameBytes
-		first.PCM, first.Map = first.PCM[cut:], first.Map[frames:]
-		total -= cut
-	}
-}
-
-func (b *Buffer) Sample() []byte {
-	var result []byte
-	for i, c := range b.chunks {
-		end := len(c.PCM)
-		if i == len(b.chunks)-1 {
-			if pos := boundary(c.Map); pos >= 0 {
-				end = pos * b.frameBytes
-			}
-		}
-		result = append(result, c.PCM[:end]...)
-	}
-
-	return result
-}
-
-func (b *Buffer) Full() bool {
-	return len(b.chunks) >= b.size
-}
+func (b *Buffer) Sample() []byte { return b.pcm }
+func (b *Buffer) Full() bool     { return b.count >= b.size }
+func (b *Buffer) Commit()        { b.committed = true }
 
 func (b *Buffer) Clear() {
-	b.chunks = nil
-}
-
-func boundary(m string) int {
-	pos := strings.LastIndexByte(m, '0')
-	if len(m) > 0 && pos*5 > len(m)*4 {
-		return pos
-	}
-
-	return -1
+	b.pcm = nil
+	b.count = 0
+	b.committed = false
 }

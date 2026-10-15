@@ -10,148 +10,249 @@ import (
 	"vks-stt-v2/internal/audio"
 )
 
-func chunk(flags string, value byte, ms int) audio.Chunk {
-	return audio.Chunk{
-		PCM: bytes.Repeat([]byte{value}, len(flags)*audio.SampleRate*ms/1000*2),
-		Map: flags,
+func TestBufferPreservesEndsAndOverlap(t *testing.T) {
+	b := NewBuffer(2, 25, 500)
+	first := bytes.Repeat([]byte{1}, 20000)
+	last := bytes.Repeat([]byte{2}, 24002) // Includes a partial 10/32 ms frame.
+	b.Add(first)
+	b.Add(last)
+	want := append(append([]byte(nil), first...), last...)
+	if !b.Full() || !bytes.Equal(b.Sample(), want) {
+		t.Fatal("buffer cut the end of an uncommitted phrase")
+	}
+	b.Commit()
+	next := bytes.Repeat([]byte{3}, 8000)
+	b.Add(next)
+	want = append(bytes.Repeat([]byte{2}, 16000), next...)
+	if b.Full() || !bytes.Equal(b.Sample(), want) {
+		t.Fatal("rollover did not retain exactly 500 ms of context")
 	}
 }
 
-func TestBufferRolloverAndFrameDuration(t *testing.T) {
-	for _, ms := range []int{10, 20, 30} {
-		b := NewBuffer(2, ms, 25)
-		first, last, next := chunk("1111111111", 1, ms), chunk("1111111110", 2, ms), chunk("1111111111", 3, ms)
-		b.Add(first)
-		b.Add(last)
-		want := len(first.PCM) + 9*audio.SampleRate*ms/1000*2
-		if !b.Full() || len(b.Sample()) != want {
-			t.Fatalf("%d ms: %d != %d", ms, len(b.Sample()), want)
-		}
-		b.Add(next)
-		want = audio.SampleRate*ms/1000*2 + len(next.PCM)
-		if !b.Full() || len(b.Sample()) != want || b.Sample()[0] != 2 {
-			t.Fatalf("rollover %d: %d", ms, len(b.Sample()))
-		}
-		b.Clear()
-		if b.Full() || len(b.Sample()) != 0 {
-			t.Fatal("clear failed")
-		}
+func TestBufferSealsBeforeDurationLimit(t *testing.T) {
+	b := NewBuffer(64, 1, 100)
+	first := bytes.Repeat([]byte{1}, 24000)
+	second := bytes.Repeat([]byte{2}, 16000)
+	b.Add(first)
+	sealed := b.Add(second)
+	if !bytes.Equal(sealed, first) || len(b.Sample()) != 19200 {
+		t.Fatal("duration limit discarded uncommitted audio")
+	}
+	if !bytes.Equal(b.Sample()[3200:], second) {
+		t.Fatal("new audio was truncated")
+	}
+	b.Commit()
+	fullUpload := bytes.Repeat([]byte{3}, 32000)
+	b.Add(fullUpload)
+	if !bytes.Equal(b.Sample(), fullUpload) {
+		t.Fatal("overlap displaced new audio")
 	}
 }
 
-func TestBufferSizeOneAndDurationCap(t *testing.T) {
-	b := NewBuffer(1, 10, 1)
-	for i := 0; i < 20; i++ {
-		b.Add(chunk("111", byte(i), 10))
-		if len(b.Sample()) != 960 || !b.Full() {
-			t.Fatal("size=1 grows")
-		}
+type fakeDecoder struct{}
+
+func (fakeDecoder) Decode(ctx context.Context, data []byte) ([]byte, error) {
+	if string(data) == "bad" {
+		return nil, audio.ErrAudio
 	}
-	b = NewBuffer(64, 10, 1)
-	for i := 0; i < 100; i++ {
-		b.Add(chunk("111", byte(i), 10))
-		if len(b.Sample()) > 32000 {
-			t.Fatal("duration cap exceeded")
-		}
-	}
+	return append([]byte(nil), data...), ctx.Err()
 }
 
-type fakeProcessor struct{}
-
-func (fakeProcessor) Process(ctx context.Context, data []byte) (audio.Chunk, error) {
-	if err := ctx.Err(); err != nil {
-		return audio.Chunk{}, err
-	}
-
-	if len(data) == 0 {
-		return audio.Chunk{}, nil
-	}
-
-	return chunk("111", data[0], 10), nil
+type fakeVAD struct {
+	streams []*fakeFilter
+	tail    []byte
 }
 
-type fakeModel struct{ err error }
-
-func (m fakeModel) Transcribe(context.Context, []byte) (string, error) {
-	return "Полный текст, а не первый символ.", m.err
+func (v *fakeVAD) NewStream() (audio.Filter, error) {
+	f := &fakeFilter{tail: v.tail}
+	v.streams = append(v.streams, f)
+	return f, nil
 }
 
-func TestSessionFinalPartialFlushAndIsolation(t *testing.T) {
+type fakeFilter struct {
+	tail   []byte
+	closed bool
+}
+
+func (f *fakeFilter) Accept(_ context.Context, pcm []byte) (audio.Chunk, error) {
+	if string(pcm) == "pause" {
+		return audio.Chunk{Ended: true}, nil
+	}
+	return audio.Chunk{PCM: pcm}, nil
+}
+
+func (f *fakeFilter) Flush(context.Context) (audio.Chunk, error) {
+	return audio.Chunk{PCM: f.tail, Ended: true}, nil
+}
+
+func (f *fakeFilter) Close() { f.closed = true }
+
+type recordingModel struct {
+	inputs [][]byte
+	err    error
+}
+
+func (m *recordingModel) Transcribe(_ context.Context, pcm []byte) (string, error) {
+	m.inputs = append(m.inputs, append([]byte(nil), pcm...))
+	return "Полный текст.", m.err
+}
+
+func testService() (*Service, *fakeVAD, *recordingModel) {
+	vad := &fakeVAD{}
+	model := &recordingModel{}
 	s := &Service{
-		Processor:  fakeProcessor{},
-		Model:      fakeModel{},
-		BufferSize: 2,
-		FrameMS:    10,
-		MaxSeconds: 25,
-		Timeout:    time.Second,
+		Decoder: fakeDecoder{}, VAD: vad, Model: model,
+		BufferSize: 2, OverlapMS: 500, MaxSeconds: 25, Timeout: time.Second,
 	}
-	a, b := s.NewSession(), s.NewSession()
-	r, err := a.Transcribe(context.Background(), []byte{1}, false)
-	if err != nil || r.Partial == nil || *r.Partial != "Полный текст, а не первый символ." {
+	return s, vad, model
+}
+
+func TestSessionIsolationFinalAndFlush(t *testing.T) {
+	service, vad, _ := testService()
+	a, b := service.NewSession(), service.NewSession()
+	defer a.Close()
+	defer b.Close()
+	ctx := context.Background()
+	for _, s := range []*Session{a, b} {
+		r, err := s.Transcribe(ctx, []byte{1, 2}, false)
+		if err != nil || r.Partial == nil {
+			t.Fatalf("first chunk: %+v %v", r, err)
+		}
+	}
+	if len(vad.streams) != 2 || a.filter == b.filter {
+		t.Fatal("VAD state shared between sessions")
+	}
+	r, err := a.Transcribe(ctx, []byte{3, 4}, false)
+	if err != nil || r.Message == nil {
+		t.Fatalf("full window: %+v %v", r, err)
+	}
+	if r, err := a.Flush(ctx); err != nil || r != nil {
+		t.Fatal("flush duplicated a committed window", r, err)
+	}
+	if r, err := b.Flush(ctx); err != nil || r == nil || r.Message == nil {
+		t.Fatal("flush lost the last partial", r, err)
+	}
+	if r, err := b.Flush(ctx); err != nil || r != nil {
+		t.Fatal("flush is not idempotent", r, err)
+	}
+	for _, f := range vad.streams {
+		if !f.closed {
+			t.Fatal("native VAD not released")
+		}
+	}
+}
+
+func TestFlushRecognizesDelayedAudioTail(t *testing.T) {
+	service, vad, model := testService()
+	vad.tail = []byte{3, 4}
+	session := service.NewSession()
+	ctx := context.Background()
+	session.Transcribe(ctx, []byte{1, 2}, false)
+	r, err := session.Flush(ctx)
+	if err != nil || r == nil || r.Message == nil {
 		t.Fatalf("%+v %v", r, err)
 	}
-	r, _ = b.Transcribe(context.Background(), []byte{2}, false)
-	if r.Partial == nil {
-		t.Fatal("sessions share buffer")
-	}
-	r, _ = a.Transcribe(context.Background(), []byte{3}, false)
-	if r.Message == nil || r.Partial != nil {
-		t.Fatal("full window did not commit")
-	}
-
-	if a.Flush() != nil {
-		t.Fatal("duplicate final")
-	}
-
-	if final := b.Flush(); final == nil || final.Message == nil {
-		t.Fatal("last partial lost")
-	}
-
-	if b.Flush() != nil {
-		t.Fatal("flush is not idempotent")
-	}
-	r, _ = b.Transcribe(context.Background(), nil, false)
-	if r.Message == nil || *r.Message != "" {
-		t.Fatal("silence compatibility")
-	}
-	r, _ = b.Transcribe(context.Background(), []byte{1}, true)
-	if r.Message == nil || b.pending != nil {
-		t.Fatal("unbuffered changes buffer")
+	if len(model.inputs) != 2 || !bytes.Equal(model.inputs[1], []byte{1, 2, 3, 4}) {
+		t.Fatal("flush returned stale text without recognizing the tail", model.inputs)
 	}
 }
 
-func TestInferenceFailureResetsSession(t *testing.T) {
-	s := &Service{
-		Processor:  fakeProcessor{},
-		Model:      fakeModel{err: errors.New("model failure")},
-		BufferSize: 2,
-		FrameMS:    10,
-		MaxSeconds: 25,
-		Timeout:    time.Second,
+func TestSilenceCommitsPendingPhrase(t *testing.T) {
+	service, _, model := testService()
+	session := service.NewSession()
+	defer session.Close()
+	ctx := context.Background()
+	session.Transcribe(ctx, []byte{1, 2}, false)
+	r, err := session.Transcribe(ctx, []byte("pause"), false)
+	if err != nil || r.Message == nil || *r.Message != "Полный текст." || session.pending != nil {
+		t.Fatalf("silence did not commit the pending phrase: %+v %v", r, err)
 	}
-	session := s.NewSession()
-	if _, err := session.Transcribe(context.Background(), []byte{1}, false); err == nil {
-		t.Fatal("error suppressed")
+	if len(model.inputs) != 1 || len(session.buffer.Sample()) != 0 {
+		t.Fatal("silence re-ran recognition or retained a finished phrase")
 	}
+}
 
-	if len(session.buffer.Sample()) != 0 || session.Flush() != nil {
-		t.Fatal("failed audio retained")
+func TestUnbufferedUsesSeparateVADAndRecognizesTail(t *testing.T) {
+	service, vad, model := testService()
+	vad.tail = []byte{9, 10}
+	session := service.NewSession()
+	defer session.Close()
+	ctx := context.Background()
+	session.Transcribe(ctx, []byte{1, 2}, false)
+	session.Transcribe(ctx, []byte{3, 4}, true)
+	if len(vad.streams) != 2 || vad.streams[0].closed || !vad.streams[1].closed {
+		t.Fatal("unbuffered request changed buffered VAD state")
+	}
+	if !bytes.Equal(model.inputs[1], []byte{3, 4, 9, 10}) || !bytes.Equal(session.buffer.Sample(), []byte{1, 2}) {
+		t.Fatal("unbuffered tail missing or buffered audio changed")
+	}
+}
+
+func TestInvalidAudioPreservesStateAndInferenceFailureReleasesIt(t *testing.T) {
+	service, vad, model := testService()
+	session := service.NewSession()
+	defer session.Close()
+	ctx := context.Background()
+	session.Transcribe(ctx, []byte{1, 2}, false)
+	if _, err := session.Transcribe(ctx, []byte("bad"), false); !errors.Is(err, audio.ErrAudio) {
+		t.Fatal(err)
+	}
+	if vad.streams[0].closed || !bytes.Equal(session.buffer.Sample(), []byte{1, 2}) {
+		t.Fatal("invalid upload destroyed previous audio")
+	}
+	model.err = errors.New("model failure")
+	if _, err := session.Transcribe(ctx, []byte{3, 4}, false); err == nil {
+		t.Fatal("inference error suppressed")
+	}
+	if !vad.streams[0].closed || session.filter != nil || session.pending != nil {
+		t.Fatal("failed session retained native state")
+	}
+}
+
+func TestSessionDurationLimitRecognizesAllAudio(t *testing.T) {
+	service, _, model := testService()
+	service.MaxSeconds, service.BufferSize, service.OverlapMS = 1, 64, 100
+	session := service.NewSession()
+	defer session.Close()
+	ctx := context.Background()
+	first := bytes.Repeat([]byte{1}, 24000)
+	second := bytes.Repeat([]byte{2}, 16000)
+	session.Transcribe(ctx, first, false)
+	r, err := session.Transcribe(ctx, second, false)
+	if err != nil || r.Message == nil || !bytes.Equal(model.inputs[1], first) || !bytes.Equal(model.inputs[2][3200:], second) {
+		t.Fatal("duration rollover lost audio", err)
+	}
+	// VAD pre-roll may make a valid upload exceed the model window slightly.
+	if _, err := session.Transcribe(ctx, bytes.Repeat([]byte{3}, 34000), false); err != nil {
+		t.Fatal(err)
+	}
+	for _, pcm := range model.inputs {
+		if len(pcm) > 32000 {
+			t.Fatal("oversized window sent to GigaAM")
+		}
 	}
 }
 
 func TestCapacityWaitHonorsDeadline(t *testing.T) {
-	s := &Service{
-		Processor:  fakeProcessor{},
-		Model:      fakeModel{},
-		BufferSize: 2,
-		FrameMS:    10,
-		MaxSeconds: 25,
-		Timeout:    10 * time.Millisecond,
-		Slots:      make(chan struct{}, 1),
-	}
-	s.Slots <- struct{}{}
-	if _, err := s.NewSession().Transcribe(context.Background(), []byte{1}, false); !errors.Is(err, context.DeadlineExceeded) {
+	service, _, _ := testService()
+	service.Timeout = 10 * time.Millisecond
+	service.Slots = make(chan struct{}, 1)
+	service.Slots <- struct{}{}
+	if _, err := service.NewSession().Transcribe(context.Background(), []byte{1, 2}, false); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("capacity wait ignored deadline: %v", err)
 	}
-	<-s.Slots
+}
+
+func TestEndpointClearsCommittedOverlap(t *testing.T) {
+	service, _, model := testService()
+	service.BufferSize = 1
+	session := service.NewSession()
+	defer session.Close()
+	ctx := context.Background()
+	session.Transcribe(ctx, []byte{1, 2}, false)
+	session.Transcribe(ctx, []byte("pause"), false)
+	session.Transcribe(ctx, []byte{3, 4}, false)
+	if !bytes.Equal(model.inputs[1], []byte{3, 4}) {
+		t.Fatal("finished phrase leaked into the next phrase")
+	}
 }

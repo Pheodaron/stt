@@ -17,23 +17,6 @@ func TestSamples(t *testing.T) {
 	}
 }
 
-func TestVADSilenceAndInputValidation(t *testing.T) {
-	for _, ms := range []int{10, 20, 30} {
-		c, err := Filter(make([]byte, SampleRate*2), ms, ms*20, 3)
-		if err != nil || len(c.PCM) != 0 || c.Map != "" {
-			t.Fatalf("%d: %+v %v", ms, c, err)
-		}
-	}
-
-	if _, err := Filter([]byte{0}, 10, 200, 3); err == nil {
-		t.Fatal("odd PCM accepted")
-	}
-
-	if _, err := Filter(nil, 15, 200, 3); err == nil {
-		t.Fatal("invalid frame duration accepted")
-	}
-}
-
 func TestFFmpegDecodeAndLimits(t *testing.T) {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		t.Skip("ffmpeg not installed")

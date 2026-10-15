@@ -60,7 +60,9 @@ func TestProviderSelection(t *testing.T) {
 func TestValidation(t *testing.T) {
 	keys := []string{
 		"BUFFER_SIZE",
-		"FRAME_DURATION_MS",
+		"VAD_THRESHOLD",
+		"VAD_MIN_SILENCE_MS",
+		"BUFFER_OVERLAP_MS",
 		"PADDING_DURATION_MS",
 		"NUM_THREADS",
 		"MODEL_WORKERS",
@@ -76,16 +78,27 @@ func TestValidation(t *testing.T) {
 			}
 		})
 	}
-	t.Setenv("FRAME_DURATION_MS", "20")
+	t.Setenv("VAD_THRESHOLD", "0.35")
 	t.Setenv("PADDING_DURATION_MS", "200")
 	t.Setenv("BUFFER_SIZE", "1")
 	t.Setenv("CLIENT_TYPE", "websocket")
 	c, err := FromEnv()
-	if err != nil || c.FrameMS != 20 || c.BufferSize != 1 {
+	if err != nil || c.VADThreshold != 0.35 || c.BufferSize != 1 {
 		t.Fatalf("%+v %v", c, err)
 	}
-	t.Setenv("PADDING_DURATION_MS", "201")
+	t.Setenv("PADDING_DURATION_MS", "501")
 	if _, err := FromEnv(); err == nil {
-		t.Fatal("unaligned padding accepted")
+		t.Fatal("padding longer than endpoint silence accepted")
+	}
+}
+
+func TestVADThresholdRejectsNonFiniteAndOutOfRangeValues(t *testing.T) {
+	for _, value := range []string{"NaN", "+Inf", "-Inf", "0", "1", "0.001"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("VAD_THRESHOLD", value)
+			if _, err := FromEnv(); err == nil {
+				t.Fatal("invalid threshold accepted")
+			}
+		})
 	}
 }

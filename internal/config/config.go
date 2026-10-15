@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
@@ -19,9 +20,8 @@ type Config struct {
 
 	FFmpeg          string
 	BufferSize      int
-	FrameMS         int
 	PaddingMS       int
-	VADMode         int
+	OverlapMS       int
 	MaxSegmentBytes int
 	MaxAudioSeconds int
 
@@ -36,6 +36,9 @@ type Config struct {
 	Decoder      string
 	Joiner       string
 	Tokens       string
+	VADModel     string
+	VADThreshold float32
+	VADSilenceMS int
 }
 
 func FromEnv() (Config, error) {
@@ -46,7 +49,13 @@ func FromEnv() (Config, error) {
 		FFmpeg:     value("FFMPEG_PATH", "ffmpeg"),
 		Provider:   value("MODEL_PROVIDER", "cpu"),
 		Precision:  value("MODEL_PRECISION", "fp32"),
+		VADModel:   value("VAD_MODEL_PATH", "models/silero-v6.2.3/silero_vad.onnx"),
 	}
+	threshold, err := strconv.ParseFloat(value("VAD_THRESHOLD", "0.35"), 32)
+	if err != nil || math.IsNaN(threshold) || math.IsInf(threshold, 0) || threshold < 0.01 || threshold >= 1 {
+		return c, fmt.Errorf("VAD_THRESHOLD must be a finite number in [0.01, 1)")
+	}
+	c.VADThreshold = float32(threshold)
 
 	if err := c.readIntegers(); err != nil {
 		return c, err
@@ -71,9 +80,9 @@ func (c *Config) readIntegers() error {
 		fallback int
 	}{
 		{"BUFFER_SIZE", &c.BufferSize, 10},
-		{"FRAME_DURATION_MS", &c.FrameMS, 10},
-		{"PADDING_DURATION_MS", &c.PaddingMS, 200},
-		{"VAD_MODE", &c.VADMode, 3},
+		{"PADDING_DURATION_MS", &c.PaddingMS, 250},
+		{"BUFFER_OVERLAP_MS", &c.OverlapMS, 500},
+		{"VAD_MIN_SILENCE_MS", &c.VADSilenceMS, 500},
 		{"MAX_SEGMENT_BYTES", &c.MaxSegmentBytes, 4 << 20},
 		{"MAX_AUDIO_SECONDS", &c.MaxAudioSeconds, 25},
 		{"NUM_THREADS", &c.NumThreads, 2},
@@ -197,16 +206,17 @@ func (c Config) validateAudio() error {
 		return fmt.Errorf("BUFFER_SIZE must be 1..64")
 	}
 
-	if c.FrameMS != 10 && c.FrameMS != 20 && c.FrameMS != 30 {
-		return fmt.Errorf("FRAME_DURATION_MS must be 10, 20 or 30")
+	if c.PaddingMS < 64 || c.PaddingMS > 2000 {
+		return fmt.Errorf("PADDING_DURATION_MS must be 64..2000")
 	}
-
-	if c.PaddingMS < c.FrameMS || c.PaddingMS > 2000 || c.PaddingMS%c.FrameMS != 0 {
-		return fmt.Errorf("PADDING_DURATION_MS must be a multiple of FRAME_DURATION_MS, up to 2000")
+	if c.VADSilenceMS < c.PaddingMS || c.VADSilenceMS > 3000 {
+		return fmt.Errorf("VAD_MIN_SILENCE_MS must be at least PADDING_DURATION_MS and at most 3000")
 	}
-
-	if c.VADMode < 0 || c.VADMode > 3 {
-		return fmt.Errorf("VAD_MODE must be 0..3")
+	if math.IsNaN(float64(c.VADThreshold)) || c.VADThreshold < 0.01 || c.VADThreshold >= 1 || c.VADModel == "" {
+		return fmt.Errorf("VAD_MODEL_PATH and a VAD_THRESHOLD in [0.01, 1) are required")
+	}
+	if c.OverlapMS < 0 || c.OverlapMS > 2000 || c.OverlapMS >= c.MaxAudioSeconds*1000 {
+		return fmt.Errorf("BUFFER_OVERLAP_MS must be 0..2000 and less than MAX_AUDIO_SECONDS")
 	}
 
 	if c.MaxSegmentBytes < 1 || c.MaxSegmentBytes > 64<<20 {

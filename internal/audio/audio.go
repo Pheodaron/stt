@@ -1,7 +1,6 @@
 package audio
 
 import (
-	"context"
 	"encoding/binary"
 	"errors"
 )
@@ -14,26 +13,14 @@ var (
 )
 
 type Chunk struct {
-	PCM []byte
-	Map string
+	PCM   []byte
+	Ended bool
 }
 
 type Processor struct {
 	FFmpeg     string
-	FrameMS    int
-	PaddingMS  int
-	VADMode    int
 	MaxBytes   int
 	MaxSeconds int
-}
-
-func (p Processor) Process(ctx context.Context, data []byte) (Chunk, error) {
-	pcm, err := p.Decode(ctx, data)
-	if err != nil {
-		return Chunk{}, err
-	}
-
-	return Filter(pcm, p.FrameMS, p.PaddingMS, p.VADMode)
 }
 
 func Samples(pcm []byte) []float32 {

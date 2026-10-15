@@ -113,6 +113,7 @@ func (w *WebSocket) ping(ctx context.Context, connection *websocket.Conn, cancel
 
 func (w *WebSocket) readMessages(ctx context.Context, connection *websocket.Conn, timeout time.Duration) {
 	session := w.Service.NewSession()
+	defer session.Close()
 
 	for {
 		kind, data, err := connection.ReadMessage()

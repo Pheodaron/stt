@@ -47,6 +47,15 @@ func run(ctx context.Context) error {
 		return err
 	}
 	defer model.Close()
+	vad, err := audio.NewSilero(audio.VADConfig{
+		Model:        cfg.VADModel,
+		Threshold:    cfg.VADThreshold,
+		PaddingMS:    cfg.PaddingMS,
+		MinSilenceMS: cfg.VADSilenceMS,
+	})
+	if err != nil {
+		return err
+	}
 
 	listener, err := net.Listen("tcp", cfg.Address())
 	if err != nil {
@@ -54,7 +63,7 @@ func run(ctx context.Context) error {
 	}
 	defer listener.Close()
 
-	service := newService(cfg, model)
+	service := newService(cfg, model, vad)
 	logReady(cfg, listener.Addr())
 
 	if cfg.ClientType == "websocket" {
@@ -64,21 +73,19 @@ func run(ctx context.Context) error {
 	return serveGRPC(ctx, listener, service, cfg)
 }
 
-func newService(cfg config.Config, model stt.Model) *stt.Service {
+func newService(cfg config.Config, model stt.Model, vad stt.VAD) *stt.Service {
 	processor := audio.Processor{
 		FFmpeg:     cfg.FFmpeg,
-		FrameMS:    cfg.FrameMS,
-		PaddingMS:  cfg.PaddingMS,
-		VADMode:    cfg.VADMode,
 		MaxBytes:   cfg.MaxSegmentBytes,
 		MaxSeconds: cfg.MaxAudioSeconds,
 	}
 
 	return &stt.Service{
-		Processor:  processor,
+		Decoder:    processor,
+		VAD:        vad,
 		Model:      model,
 		BufferSize: cfg.BufferSize,
-		FrameMS:    cfg.FrameMS,
+		OverlapMS:  cfg.OverlapMS,
 		MaxSeconds: cfg.MaxAudioSeconds,
 		Timeout:    cfg.RequestTimeout,
 		Slots:      make(chan struct{}, cfg.ModelWorkers*2),
@@ -94,5 +101,8 @@ func logReady(cfg config.Config, address net.Addr) {
 		"precision", cfg.Precision,
 		"threads", cfg.NumThreads,
 		"workers", cfg.ModelWorkers,
+		"vad", "silero-v6.2.3",
+		"vad_provider", "cpu",
+		"vad_threshold", cfg.VADThreshold,
 	)
 }

@@ -25,7 +25,9 @@ func RegisterGRPC(server *grpc.Server, service *stt.Service) {
 }
 
 func (g *GRPC) TranscribeUnbuffered(ctx context.Context, request *sttv1.VoiceChunk) (*sttv1.TranscribedText, error) {
-	r, err := g.Service.NewSession().Transcribe(ctx, request.GetSegment(), true)
+	session := g.Service.NewSession()
+	defer session.Close()
+	r, err := session.Transcribe(ctx, request.GetSegment(), true)
 	if err != nil {
 		return nil, grpcError(err)
 	}
@@ -35,10 +37,15 @@ func (g *GRPC) TranscribeUnbuffered(ctx context.Context, request *sttv1.VoiceChu
 
 func (g *GRPC) Transcribe(stream grpc.BidiStreamingServer[sttv1.VoiceChunk, sttv1.TranscribedText]) error {
 	session := g.Service.NewSession()
+	defer session.Close()
 	for {
 		request, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
-			if r := session.Flush(); r != nil {
+			r, err := session.Flush(stream.Context())
+			if err != nil {
+				return grpcError(err)
+			}
+			if r != nil {
 				return stream.Send(toProto(*r))
 			}
 			return nil

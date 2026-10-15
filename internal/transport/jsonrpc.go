@@ -96,7 +96,7 @@ func (w *WebSocket) dispatchBatch(ctx context.Context, session *stt.Session, dat
 func (w *WebSocket) execute(ctx context.Context, session *stt.Session, request rpcRequest) (stt.Result, *rpcFault) {
 	switch request.Method {
 	case "flush":
-		return flushSession(session, request.Params)
+		return flushSession(ctx, session, request.Params)
 	case "upload_part", "upload_part_unbuffered":
 		return w.uploadSegment(ctx, session, request)
 	default:
@@ -104,12 +104,16 @@ func (w *WebSocket) execute(ctx context.Context, session *stt.Session, request r
 	}
 }
 
-func flushSession(session *stt.Session, params json.RawMessage) (stt.Result, *rpcFault) {
+func flushSession(ctx context.Context, session *stt.Session, params json.RawMessage) (stt.Result, *rpcFault) {
 	if !emptyParams(params) {
 		return stt.Result{}, &rpcFault{Code: -32602, Message: "Invalid params"}
 	}
 
-	if result := session.Flush(); result != nil {
+	result, err := session.Flush(ctx)
+	if err != nil {
+		return stt.Result{}, recognitionFault(err)
+	}
+	if result != nil {
 		return *result, nil
 	}
 

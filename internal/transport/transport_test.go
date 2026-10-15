@@ -23,17 +23,31 @@ import (
 
 type processor struct{}
 
-func (processor) Process(ctx context.Context, b []byte) (audio.Chunk, error) {
+func (processor) Decode(ctx context.Context, b []byte) ([]byte, error) {
 	if string(b) == "bad" {
-		return audio.Chunk{}, audio.ErrAudio
+		return nil, audio.ErrAudio
 	}
 
 	if len(b) == 0 {
-		return audio.Chunk{}, nil
+		return nil, nil
 	}
 
-	return audio.Chunk{PCM: make([]byte, 320), Map: "1"}, nil
+	return make([]byte, 320), nil
 }
+
+type passthroughVAD struct{}
+
+func (passthroughVAD) NewStream() (audio.Filter, error) { return &passthroughFilter{}, nil }
+
+type passthroughFilter struct{}
+
+func (*passthroughFilter) Accept(_ context.Context, pcm []byte) (audio.Chunk, error) {
+	return audio.Chunk{PCM: pcm}, nil
+}
+func (*passthroughFilter) Flush(context.Context) (audio.Chunk, error) {
+	return audio.Chunk{Ended: true}, nil
+}
+func (*passthroughFilter) Close() {}
 
 type model struct{}
 
@@ -43,10 +57,11 @@ func (model) Transcribe(context.Context, []byte) (string, error) {
 
 func service() *stt.Service {
 	return &stt.Service{
-		Processor:  processor{},
+		Decoder:    processor{},
+		VAD:        passthroughVAD{},
 		Model:      model{},
 		BufferSize: 2,
-		FrameMS:    10,
+		OverlapMS:  500,
 		MaxSeconds: 25,
 		Timeout:    time.Second,
 	}

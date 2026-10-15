@@ -15,11 +15,13 @@ run = "test -f .env || cp .env.example .env"
 
 [tasks."model:prepare"]
 description = "Download original GigaAM weights and export sherpa-compatible FP32 ONNX"
+depends = ["vad:prepare"]
 tools.python = "3.11.13"
 run = "sh script/export-model-fp32.sh"
 
 [tasks."model:check"]
-description = "Check that the four required model files exist"
+description = "Check that GigaAM and Silero model files exist"
+depends = ["vad:check"]
 run = '''
 for file in encoder.onnx decoder.onnx joiner.onnx tokens.txt; do
   path="models/gigaam-v3-fp32/$file"
@@ -29,6 +31,23 @@ for file in encoder.onnx decoder.onnx joiner.onnx tokens.txt; do
   fi
 done
 echo "FP32 model files are present; inference quality is not checked by this task."
+'''
+
+[tasks."vad:prepare"]
+description = "Download and verify Silero VAD v6.2.3 FP32 ONNX"
+run = "sh script/prepare-vad.sh"
+
+[tasks."vad:check"]
+description = "Check the pinned Silero VAD model and license checksums"
+run = '''
+cd models/silero-v6.2.3 2>/dev/null || {
+  echo "Silero VAD is missing; run mise run vad:prepare" >&2
+  exit 1
+}
+printf '%s\n' \
+  '1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3  silero_vad.onnx' \
+  '2e63e9a38b6e8fc0c7bc37ce174caca1862870856c6daf5697cfb785e925520b  LICENSE' \
+  | sha256sum --check
 '''
 
 [tasks."run:cpu"]
