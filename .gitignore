@@ -1,0 +1,7 @@
+.env
+bin/
+models/*
+!models/.gitkeep
+*.test
+coverage.out
+.tools/

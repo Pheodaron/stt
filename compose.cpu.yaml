@@ -1,0 +1,18 @@
+services:
+  stt:
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    env_file: .env
+    environment:
+      URL: 0.0.0.0
+      PORT: "8080"
+      MODEL_PROVIDER: cpu
+      MODEL_PRECISION: ${MODEL_PRECISION:-fp32}
+      MODEL_DIR: /app/models/gigaam-v3-${MODEL_PRECISION:-fp32}
+    ports:
+      - "${PORT:-8080}:8080"
+    volumes:
+      - ./models:/app/models:ro
+    init: true
+    restart: unless-stopped

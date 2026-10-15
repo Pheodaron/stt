@@ -1,0 +1,26 @@
+services:
+  stt:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    env_file: .env
+    environment:
+      URL: 0.0.0.0
+      PORT: "8080"
+      MODEL_PROVIDER: cuda
+      MODEL_PRECISION: fp32
+      MODEL_DIR: /app/models/gigaam-v3-fp32
+      NVIDIA_TF32_OVERRIDE: "0"
+    ports:
+      - "${PORT:-8080}:8080"
+    volumes:
+      - ./models:/app/models:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${GPU_DEVICE_ID:-0}"]
+              capabilities: [gpu]
+    init: true
+    restart: unless-stopped

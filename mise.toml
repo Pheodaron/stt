@@ -1,0 +1,32 @@
+[tools]
+go = "1.25.1"
+
+[tasks."build:local-cpu"]
+run = "make build"
+
+[tasks."run:local-cpu"]
+run = "./bin/stt-server"
+
+[tasks."build:proto"]
+run = "make proto"
+
+[tasks."build:image-cpu"]
+run = "make image-cpu"
+
+[tasks."build:local-gpu"]
+run = "make build-gpu"
+
+[tasks."run:local-gpu"]
+run = "MODEL_PROVIDER=cuda ./bin/stt-server"
+
+[tasks."build:image-gpu"]
+run = "make image-gpu"
+
+[tasks."run:compose-gpu"]
+run = "docker compose -f compose.gpu.yaml up --build"
+
+[tasks."run:compose-cpu"]
+run = "docker compose -f compose.cpu.yaml up --build"
+
+[tasks.test]
+run = "make test"

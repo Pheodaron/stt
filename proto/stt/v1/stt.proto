@@ -1,0 +1,18 @@
+
+syntax = "proto3";
+
+option go_package = "vks-stt-v2/gen/stt/v1;sttv1";
+
+service Gigaam {
+  rpc transcribe(stream VoiceChunk) returns (stream TranscribedText) {}
+  rpc transcribe_unbuffered(VoiceChunk) returns (TranscribedText) {}
+}
+
+message VoiceChunk {
+  bytes segment = 1;
+}
+
+message TranscribedText {
+    optional string partial = 1;
+    optional string message = 2;
+}
