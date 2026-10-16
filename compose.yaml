@@ -1,0 +1,23 @@
+name: vks-stt
+
+services:
+  stt:
+    image: localhost/vks-stt-go:cpu
+    pull_policy: never
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    container_name: vks-stt
+    env_file:
+      - .env
+    environment:
+      URL: 0.0.0.0
+      PORT: "8080"
+      MODEL_PROVIDER: cpu
+      MODEL_PRECISION: fp32
+      MODEL_DIR: /app/models/gigaam-v3-fp32
+      VAD_MODEL_PATH: /app/models/silero-v6.2.3/silero_vad.onnx
+    ports:
+      - "${HOST_PORT:-8080}:8080"
+    init: true
+    stop_grace_period: 15s

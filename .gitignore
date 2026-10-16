@@ -1,0 +1,9 @@
+.env
+bin/
+models/*
+!models/.gitkeep
+*.test
+coverage.out
+.tools/
+mise.local.toml
+mise.*.local.toml

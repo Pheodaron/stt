@@ -1,0 +1,44 @@
+[env]
+PODMAN_COMPOSE_PROVIDER = { default = "podman-compose" }
+
+[tasks."build:cpu"]
+description = "Build the CPU image with its FP32 model using Podman"
+run = "podman build --file Dockerfile.cpu --tag localhost/vks-stt-go:cpu ."
+
+[tasks."build:gpu"]
+description = "Build the CUDA image with its FP32 model using Podman"
+run = "podman build --file Dockerfile.gpu --tag localhost/vks-stt-go:cuda ."
+
+[tasks.init]
+description = "Create .env without overwriting existing settings"
+run = "test -f .env || cp .env.example .env"
+
+[tasks."run:cpu"]
+description = "Run the CPU server with Podman Compose"
+depends = ["init"]
+run = "podman compose -f compose.yaml up --no-build"
+
+[tasks."run:gpu"]
+description = "Run the CUDA server with Podman Compose and NVIDIA CDI"
+depends = ["init"]
+run = "podman compose -f compose.yaml -f compose.gpu.yaml up --no-build"
+
+[tasks.logs]
+description = "Follow the server logs"
+run = "podman compose -f compose.yaml logs --follow stt"
+
+[tasks.stop]
+description = "Remove the server container and Compose network"
+run = "podman compose -f compose.yaml down --timeout 15"
+
+[tasks.proto]
+description = "Regenerate Go protobuf sources"
+tools.go = "1.25.1"
+run = '''
+protoc -I proto \
+  --plugin=protoc-gen-go="$(go tool -n protoc-gen-go)" \
+  --plugin=protoc-gen-go-grpc="$(go tool -n protoc-gen-go-grpc)" \
+  --go_out=. --go_opt=module=vks-stt-v2 \
+  --go-grpc_out=. --go-grpc_opt=module=vks-stt-v2 \
+  proto/stt/v1/stt.proto
+'''
