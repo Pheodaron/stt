@@ -15,6 +15,7 @@ import (
 	"github.com/pion/rtp"
 	"github.com/pion/rtp/codecs"
 	"github.com/pion/webrtc/v3"
+	"github.com/pion/webrtc/v3/pkg/media/oggwriter"
 )
 
 const (
@@ -100,14 +101,24 @@ func (t *BufferedPacketer) Start() error { return t.StartContext(context.Backgro
 // allow the clock to advance even when DTX/mute stops RTP completely.
 func (t *BufferedPacketer) StartContext(ctx context.Context) error {
 	defer t.track.SetReadDeadline(time.Time{})
-	var chunk *opusOgg
+	var chunk *bytes.Buffer
+	var writer *oggwriter.OggWriter
+	var audioPackets int
 	var firstAudioAt, lastPacketAt time.Time
+	defer func() {
+		if writer != nil {
+			_ = writer.Close()
+		}
+	}()
 
 	flush := func() error {
-		if chunk == nil || chunk.packets == 0 {
+		if chunk == nil || audioPackets == 0 {
 			return nil
 		}
-		buf := chunk.finish()
+		if err := writer.Close(); err != nil {
+			return fmt.Errorf("close Ogg writer: %w", err)
+		}
+		writer = nil
 		timer := time.NewTimer(t.options.EnqueueTimeout)
 		defer timer.Stop()
 		select {
@@ -115,9 +126,10 @@ func (t *BufferedPacketer) StartContext(ctx context.Context) error {
 			return ctx.Err()
 		case <-timer.C:
 			return errors.New("audio chunk queue blocked: enqueue timeout")
-		case t.ch <- buf:
+		case t.ch <- chunk:
 			// Ownership is transferred: no writes to this backing array follow.
 			chunk = nil
+			audioPackets = 0
 			firstAudioAt = time.Time{}
 			return nil
 		}
@@ -138,15 +150,21 @@ func (t *BufferedPacketer) StartContext(ctx context.Context) error {
 					continue
 				}
 				if chunk == nil {
-					chunk = newOpusOgg(t.channels)
+					chunk = &bytes.Buffer{}
+					var err error
+					writer, err = oggwriter.NewWith(chunk, 48000, t.channels)
+					if err != nil {
+						return fmt.Errorf("create Ogg writer: %w", err)
+					}
 					if firstAudioAt.IsZero() {
 						firstAudioAt = time.Now()
 					}
 				}
-				if err := chunk.writePacket(packet.Payload); err != nil {
-					return fmt.Errorf("pack Opus: %w", err)
+				if err := writer.WriteRTP(packet); err != nil {
+					return fmt.Errorf("write RTP to Ogg: %w", err)
 				}
-				if len(chunk.data) >= t.options.MaxBufferBytes {
+				audioPackets++
+				if chunk.Len() >= t.options.MaxBufferBytes {
 					if err := flush(); err != nil {
 						return err
 					}
