@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"os"
 	"sync/atomic"
+	"time"
 	"vks_back/gen/proto/stt"
 	"vks_back/internal/vks/stt/packeter"
 
@@ -24,6 +26,8 @@ var (
 type SttAgent struct {
 	room   *lksdk.Room
 	client stt.GigaamClient
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 type BroadcastMessageData struct {
@@ -37,9 +41,8 @@ type BroadcastMessage struct {
 }
 
 func NewAgent() *SttAgent {
-	return &SttAgent{
-		client: NewSttClient(),
-	}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &SttAgent{client: NewSttClient(), ctx: ctx, cancel: cancel}
 }
 
 func (s *SttAgent) BroadcastTranscript(
@@ -63,44 +66,24 @@ func (s *SttAgent) BroadcastTranscript(
 	})
 }
 
-const (
-	maxAudioLate = 200
-)
-
+// WithParticipant sends and receives independently; cancel must cancel the
+// context used to open rpcClient, so a failed worker unblocks the other one.
 func (s *SttAgent) WithParticipant(
-	ch chan *bytes.Buffer,
+	ctx context.Context,
+	cancel context.CancelFunc,
+	ch <-chan *bytes.Buffer,
 	rp *lksdk.RemoteParticipant,
 	rpcClient stt.Gigaam_TranscribeClient,
 ) error {
-	for buf := range ch {
-		log.Println("Sent: ", buf.Len())
-		err := rpcClient.Send(&stt.VoiceChunk{
-			Segment: buf.Bytes(),
-		})
-		if err != nil {
-			log.Println("rpcClient.Send: ", err)
-			return err
-		}
-
-		res, err := rpcClient.Recv()
-		if err != nil {
-			log.Println("rpcClient.Recv: ", err)
-			return err
-		}
-
+	return exchangeChunks(ctx, cancel, ch, rpcClient, func(res *stt.TranscribedText) error {
 		if res.Partial != nil {
-			log.Printf("got: %s\n", *res.Partial)
+			log.Printf("partial: %s", *res.Partial)
 		}
 		if res.Message != nil {
-			log.Printf("got: %s\n", *res.Message)
+			log.Printf("transcript: %s", *res.Message)
 		}
-		err = s.BroadcastTranscript(rp, res)
-		if err != nil {
-			log.Println("s.BroadcastTranscript: ", err)
-			return err
-		}
-	}
-	return nil
+		return s.BroadcastTranscript(rp, res)
+	})
 }
 
 func AssertIsAudio(track *webrtc.TrackRemote) bool {
@@ -119,42 +102,64 @@ func (s *SttAgent) OnTrack(
 	log.Println("Listen to user: ", rp.Name(), "session: ", pub.Name())
 	log.Println("Codec: ", track.Codec())
 
-	ch := make(chan *bytes.Buffer, 14)
-	defer close(ch)
-
-	decoder, err := packeter.NewOpusBuffer(track, ch)
+	// The output queue is deliberately small; enqueue has a bounded wait.
+	ch := make(chan *bytes.Buffer, 4)
+	packer, err := packeter.NewOpusBuffer(track, ch)
 	if err != nil {
-		log.Println("packeter.NewOpusBuffer err: ", err)
-		s.Remove()
+		log.Println("packeter.NewOpusBuffer:", err)
 		return
 	}
-
-	client, err := s.client.Transcribe(context.Background())
+	parent := s.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+	client, err := s.client.Transcribe(ctx)
 	if err != nil {
-		log.Println("s.client.Transcribe err: ", err)
-		s.Remove()
+		log.Println("s.client.Transcribe:", err)
 		return
 	}
+	done := make(chan error, 1)
+	go func() { done <- s.WithParticipant(ctx, cancel, ch, rp, client) }()
 
-	go s.WithParticipant(ch, rp, client)
-
-	err = decoder.Start()
-	if err == io.EOF {
-		log.Println("User: ", rp.Name(), " EOF")
-		return
+	packErr := packer.StartContext(ctx)
+	// StartContext has already delivered the valid tail on EOF/read failure.
+	// Let the sender drain the queue, CloseSend, and receive final responses.
+	close(ch)
+	// Bound shutdown even if Send is blocked before it can observe close(ch).
+	drainTimer := time.NewTimer(transcriptDrainTimeout)
+	var rpcErr error
+	select {
+	case rpcErr = <-done:
+	case <-drainTimer.C:
+		cancel()
+		rpcErr = <-done
+		log.Println("STT drain timed out for:", rp.Identity())
 	}
-	if err != nil {
-		log.Println("DECODER ERR: ", err)
-		s.Remove()
+	drainTimer.Stop()
+	if packErr != nil && !errors.Is(packErr, io.EOF) && !errors.Is(packErr, context.Canceled) {
+		log.Println("packeter:", packErr)
+	}
+	if rpcErr != nil && !errors.Is(rpcErr, context.Canceled) {
+		log.Println("transcribe:", rpcErr)
 	}
 }
 
 func (s *SttAgent) Remove() {
-	// TODO: find out if it triggers OnDisconnect
-	s.room.DisconnectWithReason(livekit.DisconnectReason_CLIENT_INITIATED)
+	// Local DisconnectWithReason need not invoke OnDisconnected in the SDK.
+	if s.cancel != nil {
+		s.cancel()
+	}
+	if s.room != nil {
+		s.room.DisconnectWithReason(livekit.DisconnectReason_CLIENT_INITIATED)
+	}
 }
 
 func (s *SttAgent) OnDisconnect() {
+	if s.cancel != nil {
+		s.cancel()
+	}
 	agentCounter.Add(-1)
 }
 
@@ -198,6 +203,7 @@ func (s *SttAgent) JoinRoom(name string) error {
 		lksdk.WithAutoSubscribe(true),
 	)
 	if err != nil {
+		s.cancel()
 		return err
 	}
 
