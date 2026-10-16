@@ -32,7 +32,7 @@ type Silero struct {
 func NewSilero(config VADConfig) (*Silero, error) {
 	info, err := os.Stat(config.Model)
 	if err != nil {
-		return nil, fmt.Errorf("Silero VAD model %q: %w; run mise run vad:prepare", config.Model, err)
+		return nil, fmt.Errorf("Silero VAD model %q: %w; rebuild the image and check VAD_MODEL_PATH", config.Model, err)
 	}
 	if !info.Mode().IsRegular() || info.Size() == 0 {
 		return nil, fmt.Errorf("invalid Silero VAD model %q", config.Model)

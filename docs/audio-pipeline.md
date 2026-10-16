@@ -281,7 +281,7 @@ flowchart TB
       FF -->|"stdout: PCM"| GO
       ORT --> CPU
       ORT --> GPU
-      FILES["ONNX и tokens.txt: read-only mount"] -.-> SH
+      FILES["ONNX и tokens.txt: слой образа"] -.-> SH
     end
     GPU --> DEVICE["Физическая GPU хоста: доступ через CDI"]
 ```
@@ -439,7 +439,7 @@ WebSocket обычно получает JSON-RPC ошибку и может пр
 | Выполнение графов | [ONNX Runtime](https://github.com/microsoft/onnxruntime), в GPU-комплекте 1.28.2 | CPU/CUDA execution providers |
 | GPU | [NVIDIA CUDA/cuDNN](https://developer.nvidia.com/cuda-zone) | Выполнение поддерживаемых графовых операций |
 | Доступ к GPU | [NVIDIA Container Toolkit / CDI](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/cdi-support.html) | Передача выбранной GPU из хоста в Podman-контейнер |
-| Подготовка весов | [PyTorch](https://pytorch.org/) / torchaudio 2.8.0, exporter GigaAM/sherpa | Однократное скачивание и экспорт FP32 ONNX; в inference runtime не участвуют |
+| Подготовка весов | [PyTorch](https://pytorch.org/) / torchaudio 2.8.0, exporter GigaAM/sherpa | Скачивание и экспорт FP32 ONNX при сборке образа; в inference runtime не участвуют |
 | Сборка и запуск | [mise](https://mise.jdx.dev/), [Podman](https://podman.io/), podman-compose | Команды проекта, сборка CPU/CUDA, Compose-развёртывание |
 
 ## 12. Где смотреть реализацию
@@ -455,7 +455,7 @@ WebSocket обычно получает JSON-RPC ошибку и может пр
 | Пул recognizer и CGO-вызовы | [model.go](../internal/gigaam/model.go) |
 | Проверка CUDA | [provider_linux.c](../internal/gigaam/provider_linux.c) |
 | Подготовка FP32 | [export-model-fp32.sh](../script/export-model-fp32.sh) |
-| Подготовка Silero | [prepare-vad.sh](../script/prepare-vad.sh), `mise run vad:prepare` |
+| Подготовка Silero | [prepare-vad.sh](../script/prepare-vad.sh), автоматически в build-stage `vad-model` |
 
 Схемы описывают реализованный конвейер, а не доказательство точности FP32 или
 ускорения CUDA. Выполненные проверки и ограничения окружения перечислены в

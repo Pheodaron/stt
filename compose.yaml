@@ -19,7 +19,5 @@ services:
       VAD_MODEL_PATH: /app/models/silero-v6.2.3/silero_vad.onnx
     ports:
       - "${HOST_PORT:-8080}:8080"
-    volumes:
-      - ./models:/app/models:ro,z
     init: true
     stop_grace_period: 15s

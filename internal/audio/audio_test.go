@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"os"
 	"os/exec"
 	"testing"
 )
@@ -66,5 +67,47 @@ func TestFFmpegDecodeAndLimits(t *testing.T) {
 	cancel()
 	if _, err := p.Decode(ctx, wav.Bytes()); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
+	}
+}
+
+func TestFFmpegAudioFormats(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	// Each fixture is 250 ms of a 440 Hz tone, stereo, 48 kHz. Decode uses
+	// stdin exactly as the server does, including for MP4 and WebM containers.
+	for _, name := range []string{
+		"stereo48.wav", "opus.ogg", "vorbis.ogg", "tone.mp3",
+		"tone.flac", "aac.m4a", "alac.m4a", "opus.webm",
+	} {
+		t.Run(name, func(t *testing.T) {
+			data, err := os.ReadFile("testdata/" + name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p := Processor{FFmpeg: "ffmpeg", MaxBytes: 1 << 20, MaxSeconds: 1}
+			pcm, err := p.Decode(context.Background(), data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Lossy codecs may include a short priming/padding interval. A wide
+			// bound catches failed resampling/downmixing without assuming a codec.
+			ms := len(pcm) * 1000 / (SampleRate * 2)
+			if ms < 200 || ms > 375 {
+				t.Fatalf("expected about 250 ms of mono PCM16 at 16 kHz, got %d ms", ms)
+			}
+			peak := float32(0)
+			for _, sample := range Samples(pcm) {
+				if sample < 0 {
+					sample = -sample
+				}
+				if sample > peak {
+					peak = sample
+				}
+			}
+			if peak < 0.01 || peak > 0.3 {
+				t.Fatalf("decoded tone has invalid amplitude: %f", peak)
+			}
+		})
 	}
 }

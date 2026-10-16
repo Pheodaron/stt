@@ -1,4 +1,45 @@
 # syntax=docker/dockerfile:1
+FROM docker.io/library/python:3.11.13-slim-bookworm AS model-tools
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 XDG_CACHE_HOME=/tmp/.cache
+WORKDIR /tmp
+RUN --mount=type=secret,id=proxy_ca \
+    if [ -f /run/secrets/proxy_ca ]; then export APT_CONFIG=/tmp/apt-proxy-ca.conf; printf 'Acquire::https::CaInfo "/run/secrets/proxy_ca";\n' > "$APT_CONFIG"; fi; \
+    apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl git libgomp1 libsndfile1 && \
+    rm -rf /var/lib/apt/lists/* /tmp/apt-proxy-ca.conf
+RUN --mount=type=secret,id=proxy_ca \
+    if [ -f /run/secrets/proxy_ca ]; then export PIP_CERT=/run/secrets/proxy_ca GIT_SSL_CAINFO=/run/secrets/proxy_ca; fi; \
+    python3 -m pip install 'torch==2.8.0' 'torchaudio==2.8.0' \
+      --index-url https://download.pytorch.org/whl/cpu && \
+    python3 -m pip install 'gigaam @ git+https://github.com/salute-developers/GigaAM.git@7447938d791c4f3e643386ee22c33777004293a5'
+COPY --chmod=755 script/export-model-fp32.sh script/prepare-model-fp32.py script/validate-model-fp32.py /opt/model-export/
+
+FROM model-tools AS vad-model
+WORKDIR /opt/vad
+COPY script/prepare-vad.sh script/prepare-vad.sh
+RUN --mount=type=secret,id=proxy_ca \
+    if [ -f /run/secrets/proxy_ca ]; then export CURL_CA_BUNDLE=/run/secrets/proxy_ca; fi; \
+    sh script/prepare-vad.sh
+
+FROM model-tools AS model-export
+RUN --mount=type=cache,id=gigaam-v3-checkpoints,target=/checkpoints,sharing=locked \
+    --mount=type=secret,id=proxy_ca \
+    if [ -f /run/secrets/proxy_ca ]; then export CURL_CA_BUNDLE=/run/secrets/proxy_ca SSL_CERT_FILE=/run/secrets/proxy_ca REQUESTS_CA_BUNDLE=/run/secrets/proxy_ca; fi; \
+    sh /opt/model-export/export-model-fp32.sh /model/gigaam-v3-fp32
+
+FROM docker.io/library/debian:bookworm-slim AS ffmpeg-build
+RUN --mount=type=secret,id=proxy_ca \
+    if [ -f /run/secrets/proxy_ca ]; then export APT_CONFIG=/tmp/apt-proxy-ca.conf; printf 'Acquire::https::CaInfo "/run/secrets/proxy_ca";\n' > "$APT_CONFIG"; fi; \
+    apt-get update && apt-get install -y --no-install-recommends \
+      build-essential musl-tools nasm pkg-config curl ca-certificates && \
+    rm -rf /var/lib/apt/lists/* /tmp/apt-proxy-ca.conf
+COPY --chmod=644 script/build-ffmpeg.sh /usr/local/bin/build-ffmpeg
+ARG FFMPEG_BUILD_JOBS=2
+RUN --mount=type=secret,id=proxy_ca \
+    if [ -f /run/secrets/proxy_ca ]; then export CURL_CA_BUNDLE=/run/secrets/proxy_ca; fi; \
+    sh /usr/local/bin/build-ffmpeg
+
 FROM docker.io/library/golang:1.25-bookworm AS build
 WORKDIR /src
 ARG GOPROXY=https://proxy.golang.org,direct
@@ -13,11 +54,16 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 FROM docker.io/library/debian:bookworm-slim
 RUN --mount=type=secret,id=proxy_ca \
     if [ -f /run/secrets/proxy_ca ]; then export APT_CONFIG=/tmp/apt-proxy-ca.conf; printf 'Acquire::https::CaInfo "/run/secrets/proxy_ca";\n' > "$APT_CONFIG"; fi; \
-    apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certificates libstdc++6 && \
+    apt-get update && apt-get install -y --no-install-recommends ca-certificates libstdc++6 && \
     rm -rf /var/lib/apt/lists/* /tmp/apt-proxy-ca.conf
 WORKDIR /app
+# Keep the immutable model layer before application files for cache reuse.
+COPY --from=model-export /model/gigaam-v3-fp32/ /app/models/gigaam-v3-fp32/
+COPY --from=vad-model /opt/vad/models/silero-v6.2.3/ /app/models/silero-v6.2.3/
 COPY --from=build /out/ /app/
-ENV LD_LIBRARY_PATH=/app/lib URL=0.0.0.0 PORT=8080 MODEL_PROVIDER=cpu MODEL_PRECISION=fp32
+COPY --from=ffmpeg-build /opt/ffmpeg/bin/ffmpeg /usr/local/bin/ffmpeg
+COPY --from=ffmpeg-build /opt/ffmpeg/licenses/ /app/licenses/ffmpeg/
+ENV LD_LIBRARY_PATH=/app/lib URL=0.0.0.0 PORT=8080 MODEL_PROVIDER=cpu MODEL_PRECISION=fp32 MODEL_DIR=/app/models/gigaam-v3-fp32 VAD_MODEL_PATH=/app/models/silero-v6.2.3/silero_vad.onnx
 USER 65532:65532
 EXPOSE 8080
 ENTRYPOINT ["/app/stt-server"]
