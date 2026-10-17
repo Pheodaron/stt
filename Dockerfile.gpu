@@ -69,7 +69,7 @@ COPY --from=build /out/ /app/
 COPY --from=ffmpeg-build /opt/ffmpeg/bin/ffmpeg /usr/local/bin/ffmpeg
 COPY --from=ffmpeg-build /opt/ffmpeg/licenses/ /app/licenses/ffmpeg/
 ENV LD_LIBRARY_PATH=/app/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/lib64 \
-    URL=0.0.0.0 PORT=8080 MODEL_PROVIDER=cuda MODEL_PRECISION=fp32 MODEL_DIR=/app/models/gigaam-v3-fp32 VAD_MODEL_PATH=/app/models/silero-v6.2.3/silero_vad.onnx \
+    URL=0.0.0.0 PORT=8080 MODEL_PROVIDER=cuda VAD_MODEL_PATH=/app/models/silero-v6.2.3/silero_vad.onnx \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility NVIDIA_TF32_OVERRIDE=0
 USER 65532:65532
 EXPOSE 8080

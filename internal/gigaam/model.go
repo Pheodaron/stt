@@ -36,10 +36,11 @@ func New(c config.Config) (*Model, error) {
 		}
 	}
 
-	for _, path := range []string{c.Encoder, c.Decoder, c.Joiner, c.Tokens} {
+	for _, name := range []string{"encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"} {
+		path := config.ModelDir + "/" + name
 		info, err := os.Stat(path)
 		if err != nil {
-			return nil, fmt.Errorf("model file %q: %w; mount a sherpa-compatible model directory into the container", path, err)
+			return nil, fmt.Errorf("model file %q: %w; rebuild the image with its bundled FP32 model", path, err)
 		}
 		if !info.Mode().IsRegular() || info.Size() == 0 {
 			return nil, fmt.Errorf("invalid model file %q", path)
@@ -69,10 +70,10 @@ func recognizerConfig(cfg config.Config) sherpa.OfflineRecognizerConfig {
 	recognizer.FeatConfig.FeatureDim = 64
 
 	model := &recognizer.ModelConfig
-	model.Transducer.Encoder = cfg.Encoder
-	model.Transducer.Decoder = cfg.Decoder
-	model.Transducer.Joiner = cfg.Joiner
-	model.Tokens = cfg.Tokens
+	model.Transducer.Encoder = config.ModelDir + "/encoder.onnx"
+	model.Transducer.Decoder = config.ModelDir + "/decoder.onnx"
+	model.Transducer.Joiner = config.ModelDir + "/joiner.onnx"
+	model.Tokens = config.ModelDir + "/tokens.txt"
 	model.NumThreads = cfg.NumThreads
 	model.Provider = cfg.Provider
 	model.ModelType = "nemo_transducer"

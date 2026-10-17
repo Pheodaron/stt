@@ -38,7 +38,7 @@ func run(ctx context.Context) error {
 	logOptions := &slog.HandlerOptions{Level: cfg.Level}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, logOptions)))
 
-	if _, err := exec.LookPath(cfg.FFmpeg); err != nil {
+	if _, err := exec.LookPath(config.FFmpegPath); err != nil {
 		return fmt.Errorf("FFmpeg is required: %w", err)
 	}
 
@@ -75,7 +75,7 @@ func run(ctx context.Context) error {
 
 func newService(cfg config.Config, model stt.Model, vad stt.VAD) *stt.Service {
 	processor := audio.Processor{
-		FFmpeg:     cfg.FFmpeg,
+		FFmpeg:     config.FFmpegPath,
 		MaxBytes:   cfg.MaxSegmentBytes,
 		MaxSeconds: cfg.MaxAudioSeconds,
 	}
@@ -98,7 +98,7 @@ func logReady(cfg config.Config, address net.Addr) {
 		"protocol", cfg.ClientType,
 		"engine", "sherpa-onnx",
 		"provider", cfg.Provider,
-		"precision", cfg.Precision,
+		"precision", "fp32",
 		"threads", cfg.NumThreads,
 		"workers", cfg.ModelWorkers,
 		"vad", "silero-v6.2.3",

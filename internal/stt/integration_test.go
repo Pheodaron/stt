@@ -37,7 +37,7 @@ func TestRealChunkedPipeline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	decoder := audio.Processor{FFmpeg: cfg.FFmpeg, MaxBytes: 4 << 20, MaxSeconds: 25}
+	decoder := audio.Processor{FFmpeg: config.FFmpegPath, MaxBytes: 4 << 20, MaxSeconds: 25}
 	service := &stt.Service{
 		Decoder: decoder, VAD: vad, Model: model,
 		BufferSize: 64, OverlapMS: 500, MaxSeconds: 25, Timeout: time.Minute,

@@ -2,6 +2,21 @@
 
 Linux amd64, Go 1.25.1, sherpa-onnx Go 1.13.8.
 
+## Упрощённая конфигурация контейнера
+
+- `go test ./...` и `go vet ./...` прошли в сборочном контейнере с настоящим
+  статическим FFmpeg. Проверки настоящих моделей по-прежнему требуют весов
+  и входных записей, указанных ниже.
+- Для всех 17 параметров `FromEnv` проверены одинаковые defaults при отсутствии
+  и пустой строке, а также чтение заданных значений. Отдельно проверены ошибки
+  формата, диапазонов и выбора провайдера.
+- `docker build --check` для CPU и GPU прошёл без предупреждений.
+- CPU/GPU Compose разобраны с публичным `.env.example`: удалённые настройки
+  точности и путей не передаются, провайдеры остаются `cpu`/`cuda`.
+- Путь FFmpeg `/usr/local/bin/ffmpeg` и каталог GigaAM
+  `/app/models/gigaam-v3-fp32` в константах Go совпадают с местом копирования
+  файлов в обоих Dockerfile. Сервер использует только встроенную FP32-модель.
+
 ## Silero VAD и сохранение границ фраз
 
 - WebRTC заменён на Silero v6.2.3 FP32 ONNX через sherpa-onnx. Закреплённые
@@ -30,8 +45,9 @@ Linux amd64, Go 1.25.1, sherpa-onnx Go 1.13.8.
 
 Для настоящего optional-теста фильтрации задайте `VAD_TEST_MODEL` и
 `VAD_TEST_AUDIO`, затем выполните `go test ./internal/audio -run TestRealSilero`.
-Для полного конвейера задайте также `MODEL_TEST_AUDIO`, `MODEL_DIR`,
-`MODEL_PRECISION` и `MODEL_PROVIDER`; выполните
+Для полного конвейера задайте также `MODEL_TEST_AUDIO` и `MODEL_PROVIDER`;
+FP32-веса должны находиться в `/app/models/gigaam-v3-fp32`,
+а FFmpeg — в `/usr/local/bin/ffmpeg`. Выполните
 `go test -v ./internal/stt -run TestRealChunkedPipeline`.
 `MODEL_TEST_EXPECT` задаёт ожидаемые фрагменты текста через запятую.
 Эти тесты ничего не скачивают. Тестовые утилиты не добавляют локальный режим
@@ -86,8 +102,8 @@ Go 1.25.1 закреплён только у задачи генерации, н
   Python/PyTorch остаются в build-stage, checkpoint — в кеше сборщика.
 - Этап `model-tools` с Python 3.11.13, CPU PyTorch/torchaudio 2.8.0
   и закреплённым GigaAM собирается отдельно для проверок экспортера.
-- Готовая модель копируется отдельным слоем перед приложением. `MODEL_DIR`
-  в обоих runtime указывает на `/app/models/gigaam-v3-fp32`.
+- Готовая модель копируется отдельным слоем перед приложением.
+  В обоих образах и в коде используется путь `/app/models/gigaam-v3-fp32`.
 - Регрессионные тесты `tests/test_model_export.py` выполнены внутри образа
   под UID 1000, без сети и исходных весов. Используется настоящий `RNNTJoint`
   из закреплённого GigaAM со случайными весами и вызов joiner из закреплённого
@@ -114,7 +130,7 @@ podman run --rm --network=none --userns=keep-id \
 
 - `docker build --check` для CPU и GPU прошёл без предупреждений.
 - Реальные Compose-конфигурации CPU/GPU разобраны через `docker compose config`:
-  внешних volumes модели нет, `MODEL_DIR` указывает на встроенные файлы,
+  внешних volumes модели нет, путь модели совпадает со встроенными файлами,
   `MODEL_WORKERS=1` и `NUM_THREADS=2` сохранены.
 - `model-tools` собран из нового Dockerfile; все три теста экспортера повторно прошли
   под UID 1000 без сети.
