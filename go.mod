@@ -5,6 +5,7 @@ go 1.25.1
 require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/k2-fsa/sherpa-onnx-go v1.13.8
+	github.com/lmittmann/tint v1.2.1
 	google.golang.org/grpc v1.75.1
 	google.golang.org/protobuf v1.36.9
 )
@@ -13,7 +14,6 @@ require (
 	github.com/k2-fsa/sherpa-onnx-go-linux v1.13.8 // indirect
 	github.com/k2-fsa/sherpa-onnx-go-macos v1.13.8 // indirect
 	github.com/k2-fsa/sherpa-onnx-go-windows v1.13.8 // indirect
-	github.com/lmittmann/tint v1.2.1 // indirect
 	golang.org/x/net v0.41.0 // indirect
 	golang.org/x/sys v0.33.0 // indirect
 	golang.org/x/text v0.26.0 // indirect

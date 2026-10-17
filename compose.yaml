@@ -14,7 +14,6 @@ services:
       URL: 0.0.0.0
       PORT: "8080"
       MODEL_PROVIDER: cpu
-      VAD_MODEL_PATH: /app/models/silero-v6.2.3/silero_vad.onnx
     ports:
       - "${HOST_PORT:-8080}:8080"
     init: true

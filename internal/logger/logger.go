@@ -3,17 +3,17 @@ package logger
 import (
 	"log/slog"
 	"os"
-	"vks-stt-v2/internal/config"
 
 	"github.com/lmittmann/tint"
+	"vks-stt-v2/internal/config"
 )
 
-func Init(config config.Config) {
+func Init(cfg config.Config) {
 	level := slog.LevelInfo
-	if config.IsDev {
+	if cfg.IsDev {
 		level = slog.LevelDebug
 	}
-	slog.SetDefault(slog.New(getSlogHandler(config.IsDev, level)))
+	slog.SetDefault(slog.New(getSlogHandler(cfg.IsDev, level)))
 }
 
 func getSlogHandler(isDev bool, level slog.Leveler) slog.Handler {

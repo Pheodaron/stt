@@ -46,24 +46,35 @@ type Config struct {
 	ModelWorkers int
 }
 
+// FromEnv panics on invalid configuration before loading models or opening ports.
 func FromEnv() Config {
 	c := Config{
-		Host:            value("URL", "0.0.0.0"),
-		Port:            value("PORT", "8080"),
-		ClientType:      value("CLIENT_TYPE", "grpc"),
-		PingInterval:    seconds("PING_INTERVAL", 30),
+		// Server and logging.
+		Host:         value("URL", "0.0.0.0"),
+		Port:         value("PORT", "8080"),
+		ClientType:   value("CLIENT_TYPE", "grpc"),
+		PingInterval: seconds("PING_INTERVAL", 30),
+		IsDev:        devMode("IS_DEV", "prod"),
+
+		// Request limits.
 		MaxSegmentBytes: integer("MAX_SEGMENT_BYTES", 4<<20),
 		MaxAudioSeconds: integer("MAX_AUDIO_SECONDS", 25),
 		RequestTimeout:  seconds("REQUEST_TIMEOUT", 60),
-		BufferSize:      integer("BUFFER_SIZE", 10),
-		OverlapMS:       integer("BUFFER_OVERLAP_MS", 500),
-		PaddingMS:       integer("PADDING_DURATION_MS", 250),
-		VADSilenceMS:    integer("VAD_MIN_SILENCE_MS", 500),
-		Provider:        value("MODEL_PROVIDER", "cpu"),
-		NumThreads:      integer("NUM_THREADS", 2),
-		ModelWorkers:    integer("MODEL_WORKERS", 1),
-		VADThreshold:    vadThreshold("0.35"),
-		IsDev:           strings.ToLower(os.Getenv("IS_DEV")) == "dev",
+
+		// Recognition windows.
+		BufferSize: integer("BUFFER_SIZE", 10),
+		OverlapMS:  integer("BUFFER_OVERLAP_MS", 500),
+
+		// Voice activity detection.
+		VADModel:     VadPath,
+		VADThreshold: vadThreshold("VAD_THRESHOLD", "0.35"),
+		PaddingMS:    integer("PADDING_DURATION_MS", 250),
+		VADSilenceMS: integer("VAD_MIN_SILENCE_MS", 500),
+
+		// GigaAM inference.
+		Provider:     value("MODEL_PROVIDER", "cpu"),
+		NumThreads:   integer("NUM_THREADS", 2),
+		ModelWorkers: integer("MODEL_WORKERS", 1),
 	}
 
 	if err := c.Validate(); err != nil {
@@ -133,7 +144,7 @@ func (c Config) validateAudio() error {
 		return fmt.Errorf("VAD_MIN_SILENCE_MS must be at least PADDING_DURATION_MS and at most 3000")
 	}
 	if c.VADModel == "" {
-		return fmt.Errorf("VAD_MODEL_PATH is required")
+		return fmt.Errorf("Silero VAD model path is required")
 	}
 	if math.IsNaN(float64(c.VADThreshold)) || c.VADThreshold < 0.01 || c.VADThreshold >= 1 {
 		return fmt.Errorf("VAD_THRESHOLD must be a finite number in [0.01, 1)")
@@ -169,10 +180,21 @@ func seconds(key string, fallback int) time.Duration {
 	return time.Duration(number) * time.Second
 }
 
-func vadThreshold(fallback string) float32 {
-	threshold, err := strconv.ParseFloat(value("VAD_THRESHOLD", fallback), 32)
+func vadThreshold(key, fallback string) float32 {
+	threshold, err := strconv.ParseFloat(value(key, fallback), 32)
 	if err != nil {
-		panic("VAD_THRESHOLD must be a finite number in [0.01, 1)")
+		panic(fmt.Sprintf("%s must be a finite number in [0.01, 1)", key))
 	}
 	return float32(threshold)
+}
+
+func devMode(key, fallback string) bool {
+	switch strings.ToLower(value(key, fallback)) {
+	case "dev":
+		return true
+	case "prod":
+		return false
+	default:
+		panic(fmt.Sprintf("%s must be dev or prod", key))
+	}
 }

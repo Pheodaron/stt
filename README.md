@@ -363,10 +363,11 @@ provider, адрес `0.0.0.0` и внутренний порт `8080`.
 сервер завершается до загрузки моделей и открытия порта.
 После изменения файла остановите контейнер и запустите его снова.
 
-Сервер всегда использует FP32-модель из `/app/models/gigaam-v3-fp32`
+Сервер всегда использует FP32-модель из `/app/models/gigaam-v3-fp32`,
+Silero из `/app/models/silero-v6.2.3/silero_vad.onnx`
 и FFmpeg из `/usr/local/bin/ffmpeg`. Эти пути закреплены в коде и совпадают
-с путями в обоих Dockerfile. `MODEL_PRECISION`, `MODEL_DIR`, `FFMPEG_PATH`
-и отдельные `ENCODER_PATH`, `DECODER_PATH`, `JOINER_PATH`, `TOKENS_PATH`
+с путями в обоих Dockerfile. `MODEL_PRECISION`, `MODEL_DIR`, `FFMPEG_PATH`,
+`VAD_MODEL_PATH`, `LOG_LEVEL` и отдельные `ENCODER_PATH`, `DECODER_PATH`, `JOINER_PATH`, `TOKENS_PATH`
 больше не читаются; удалите их из прежней `.env`.
 
 Сервер и журнал:
@@ -377,7 +378,12 @@ provider, адрес `0.0.0.0` и внутренний порт `8080`.
 | `PORT` | `8080` | Порт внутри контейнера |
 | `CLIENT_TYPE` | `grpc` | `grpc` или `websocket` |
 | `PING_INTERVAL` | `30` | WebSocket ping, секунды |
-| `LOG_LEVEL` | `info` | debug, info, warn, error, critical |
+| `IS_DEV` | `prod` | `prod`: JSON, уровень INFO; `dev`: цветной текст, уровень DEBUG |
+
+`IS_DEV` принимает только `dev` и `prod` без учёта регистра. Пустое или
+отсутствующее значение означает `prod`; другие значения вызывают панику.
+Оба режима пишут журнал в stderr. Для режима разработки задайте `IS_DEV=dev`
+в `.env` и перезапустите контейнер.
 
 Ограничения запросов:
 
@@ -398,7 +404,6 @@ provider, адрес `0.0.0.0` и внутренний порт `8080`.
 
 | Переменная | По умолчанию | Назначение |
 |---|---|---|
-| `VAD_MODEL_PATH` | `/app/models/silero-v6.2.3/silero_vad.onnx` | ONNX VAD, общий для CPU/CUDA |
 | `VAD_THRESHOLD` | `0.35` | Порог речи Silero: от 0.01 до 1, не включая 1 |
 | `PADDING_DURATION_MS` | `250` | Запас PCM перед обнаружением речи; 64..2000 мс |
 | `VAD_MIN_SILENCE_MS` | `500` | Пауза для окончания речи; не меньше padding, до 3000 мс |
