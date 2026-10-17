@@ -2,11 +2,11 @@ package config
 
 import (
 	"fmt"
-	"log/slog"
 	"math"
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -22,8 +22,8 @@ type Config struct {
 	Host         string
 	Port         string
 	ClientType   string
-	Level        slog.Level
 	PingInterval time.Duration
+	IsDev        bool
 
 	// Request limits.
 	MaxSegmentBytes int
@@ -63,11 +63,7 @@ func FromEnv() Config {
 		NumThreads:      integer("NUM_THREADS", 2),
 		ModelWorkers:    integer("MODEL_WORKERS", 1),
 		VADThreshold:    vadThreshold("0.35"),
-	}
-
-	err := c.Level.UnmarshalText([]byte(value("LOG_LEVEL", "info")))
-	if err != nil {
-		panic("LOG_LEVEL must be debug, info, warn or error")
+		IsDev:           strings.ToLower(os.Getenv("IS_DEV")) == "dev",
 	}
 
 	if err := c.Validate(); err != nil {

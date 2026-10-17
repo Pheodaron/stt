@@ -14,6 +14,7 @@ import (
 	"vks-stt-v2/internal/audio"
 	"vks-stt-v2/internal/config"
 	"vks-stt-v2/internal/gigaam"
+	"vks-stt-v2/internal/logger"
 	"vks-stt-v2/internal/stt"
 )
 
@@ -31,9 +32,7 @@ func main() {
 
 func run(ctx context.Context) error {
 	cfg := config.FromEnv()
-
-	logOptions := &slog.HandlerOptions{Level: cfg.Level}
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, logOptions)))
+	logger.Init(cfg)
 
 	if _, err := exec.LookPath(config.FFmpegPath); err != nil {
 		return fmt.Errorf("FFmpeg is required: %w", err)
