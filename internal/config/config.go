@@ -14,6 +14,7 @@ import (
 const (
 	FFmpegPath = "/usr/local/bin/ffmpeg"
 	ModelDir   = "/app/models/gigaam-v3-fp32"
+	VadPath    = "/app/models/silero-v6.2.3/silero_vad.onnx"
 )
 
 type Config struct {
@@ -45,51 +46,29 @@ type Config struct {
 	ModelWorkers int
 }
 
-// FromEnv panics on invalid configuration, before startup acquires resources.
 func FromEnv() Config {
-	var c Config
-
-	// Server and logging.
-	c.Host = value("URL", "0.0.0.0")
-	c.Port = value("PORT", "8080")
-	c.ClientType = value("CLIENT_TYPE", "grpc")
-	c.PingInterval = seconds("PING_INTERVAL", 30)
-	switch value("LOG_LEVEL", "info") {
-	case "debug":
-		c.Level = slog.LevelDebug
-	case "info":
-		c.Level = slog.LevelInfo
-	case "warn":
-		c.Level = slog.LevelWarn
-	case "error", "critical":
-		c.Level = slog.LevelError
-	default:
-		panic("LOG_LEVEL must be debug, info, warn, error or critical")
+	c := Config{
+		Host:            value("URL", "0.0.0.0"),
+		Port:            value("PORT", "8080"),
+		ClientType:      value("CLIENT_TYPE", "grpc"),
+		PingInterval:    seconds("PING_INTERVAL", 30),
+		MaxSegmentBytes: integer("MAX_SEGMENT_BYTES", 4<<20),
+		MaxAudioSeconds: integer("MAX_AUDIO_SECONDS", 25),
+		RequestTimeout:  seconds("REQUEST_TIMEOUT", 60),
+		BufferSize:      integer("BUFFER_SIZE", 10),
+		OverlapMS:       integer("BUFFER_OVERLAP_MS", 500),
+		PaddingMS:       integer("PADDING_DURATION_MS", 250),
+		VADSilenceMS:    integer("VAD_MIN_SILENCE_MS", 500),
+		Provider:        value("MODEL_PROVIDER", "cpu"),
+		NumThreads:      integer("NUM_THREADS", 2),
+		ModelWorkers:    integer("MODEL_WORKERS", 1),
+		VADThreshold:    vadThreshold("0.35"),
 	}
 
-	// Request limits.
-	c.MaxSegmentBytes = integer("MAX_SEGMENT_BYTES", 4<<20)
-	c.MaxAudioSeconds = integer("MAX_AUDIO_SECONDS", 25)
-	c.RequestTimeout = seconds("REQUEST_TIMEOUT", 60)
-
-	// Recognition windows.
-	c.BufferSize = integer("BUFFER_SIZE", 10)
-	c.OverlapMS = integer("BUFFER_OVERLAP_MS", 500)
-
-	// Voice activity detection.
-	c.VADModel = value("VAD_MODEL_PATH", "/app/models/silero-v6.2.3/silero_vad.onnx")
-	threshold, err := strconv.ParseFloat(value("VAD_THRESHOLD", "0.35"), 32)
+	err := c.Level.UnmarshalText([]byte(value("LOG_LEVEL", "info")))
 	if err != nil {
-		panic("VAD_THRESHOLD must be a finite number in [0.01, 1)")
+		panic("LOG_LEVEL must be debug, info, warn or error")
 	}
-	c.VADThreshold = float32(threshold)
-	c.PaddingMS = integer("PADDING_DURATION_MS", 250)
-	c.VADSilenceMS = integer("VAD_MIN_SILENCE_MS", 500)
-
-	// GigaAM inference; the container always contains the same FP32 model.
-	c.Provider = value("MODEL_PROVIDER", "cpu")
-	c.NumThreads = integer("NUM_THREADS", 2)
-	c.ModelWorkers = integer("MODEL_WORKERS", 1)
 
 	if err := c.Validate(); err != nil {
 		panic(err)
@@ -192,4 +171,12 @@ func seconds(key string, fallback int) time.Duration {
 		panic(fmt.Sprintf("%s must be 1..3600 seconds", key))
 	}
 	return time.Duration(number) * time.Second
+}
+
+func vadThreshold(fallback string) float32 {
+	threshold, err := strconv.ParseFloat(value("VAD_THRESHOLD", fallback), 32)
+	if err != nil {
+		panic("VAD_THRESHOLD must be a finite number in [0.01, 1)")
+	}
+	return float32(threshold)
 }
