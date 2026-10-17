@@ -1,8 +1,10 @@
 package config
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -18,19 +20,13 @@ func TestEmptyAndUnsetSettingsUseDefaults(t *testing.T) {
 	for _, key := range keys {
 		t.Setenv(key, "")
 	}
-	empty, err := FromEnv()
-	if err != nil {
-		t.Fatal(err)
-	}
+	empty := FromEnv()
 	for _, key := range keys {
 		if err := os.Unsetenv(key); err != nil {
 			t.Fatal(err)
 		}
 	}
-	unset, err := FromEnv()
-	if err != nil {
-		t.Fatal(err)
-	}
+	unset := FromEnv()
 	want := Config{
 		Host: "0.0.0.0", Port: "8080", ClientType: "grpc", Level: slog.LevelInfo,
 		PingInterval:    30 * time.Second,
@@ -58,10 +54,7 @@ func TestFromEnvReadsConfiguredValues(t *testing.T) {
 	for key, value := range settings {
 		t.Setenv(key, value)
 	}
-	c, err := FromEnv()
-	if err != nil {
-		t.Fatal(err)
-	}
+	c := FromEnv()
 	want := Config{
 		Host: "::1", Port: "9000", ClientType: "websocket", Level: slog.LevelDebug,
 		PingInterval:    15 * time.Second,
@@ -80,19 +73,17 @@ func TestProviderSelection(t *testing.T) {
 	if err := os.Unsetenv("MODEL_PROVIDER"); err != nil {
 		t.Fatal(err)
 	}
-	c, err := FromEnv()
-	if err != nil || c.Provider != "cpu" {
-		t.Fatalf("default provider: %+v %v", c, err)
+	c := FromEnv()
+	if c.Provider != "cpu" {
+		t.Fatalf("default provider: %+v", c)
 	}
 	t.Setenv("MODEL_PROVIDER", "cuda")
-	c, err = FromEnv()
-	if err != nil || c.Provider != "cuda" {
-		t.Fatalf("CUDA: %+v %v", c, err)
+	c = FromEnv()
+	if c.Provider != "cuda" {
+		t.Fatalf("CUDA: %+v", c)
 	}
 	t.Setenv("MODEL_PROVIDER", "auto")
-	if _, err := FromEnv(); err == nil {
-		t.Fatal("implicit provider fallback accepted")
-	}
+	expectConfigPanic(t, "MODEL_PROVIDER")
 }
 
 func TestValidation(t *testing.T) {
@@ -105,6 +96,7 @@ func TestValidation(t *testing.T) {
 		"NUM_THREADS",
 		"MODEL_WORKERS",
 		"MAX_AUDIO_SECONDS",
+		"MAX_SEGMENT_BYTES",
 		"CLIENT_TYPE",
 		"PORT",
 		"PING_INTERVAL",
@@ -114,32 +106,73 @@ func TestValidation(t *testing.T) {
 	for _, key := range keys {
 		t.Run(key, func(t *testing.T) {
 			t.Setenv(key, "invalid")
-			if _, err := FromEnv(); err == nil {
-				t.Fatal("invalid configuration accepted")
-			}
+			expectConfigPanic(t, key)
 		})
 	}
 	t.Setenv("VAD_THRESHOLD", "0.35")
 	t.Setenv("PADDING_DURATION_MS", "200")
 	t.Setenv("BUFFER_SIZE", "1")
 	t.Setenv("CLIENT_TYPE", "websocket")
-	c, err := FromEnv()
-	if err != nil || c.VADThreshold != 0.35 || c.BufferSize != 1 {
-		t.Fatalf("%+v %v", c, err)
+	c := FromEnv()
+	if c.VADThreshold != 0.35 || c.BufferSize != 1 {
+		t.Fatalf("%+v", c)
 	}
 	t.Setenv("PADDING_DURATION_MS", "501")
-	if _, err := FromEnv(); err == nil {
-		t.Fatal("padding longer than endpoint silence accepted")
-	}
+	expectConfigPanic(t, "VAD_MIN_SILENCE_MS")
 }
 
 func TestVADThresholdRejectsNonFiniteAndOutOfRangeValues(t *testing.T) {
 	for _, value := range []string{"NaN", "+Inf", "-Inf", "0", "1", "0.001"} {
 		t.Run(value, func(t *testing.T) {
 			t.Setenv("VAD_THRESHOLD", value)
-			if _, err := FromEnv(); err == nil {
-				t.Fatal("invalid threshold accepted")
-			}
+			expectConfigPanic(t, "VAD_THRESHOLD")
 		})
 	}
+}
+
+func TestOutOfRangeSettingsPanic(t *testing.T) {
+	settings := []struct {
+		key    string
+		values []string
+	}{
+		{"PORT", []string{"0", "65536"}},
+		{"PING_INTERVAL", []string{"0", "3601"}},
+		{"REQUEST_TIMEOUT", []string{"0", "3601"}},
+		{"MAX_SEGMENT_BYTES", []string{"0", "67108865"}},
+		{"MAX_AUDIO_SECONDS", []string{"0", "26", "9223372036854775807"}},
+		{"BUFFER_SIZE", []string{"0", "65"}},
+		{"BUFFER_OVERLAP_MS", []string{"-1", "2001"}},
+		{"PADDING_DURATION_MS", []string{"63", "2001"}},
+		{"VAD_MIN_SILENCE_MS", []string{"249", "3001"}},
+		{"NUM_THREADS", []string{"0", "65", "9223372036854775808"}},
+		{"MODEL_WORKERS", []string{"0", "17"}},
+	}
+	for _, setting := range settings {
+		for _, value := range setting.values {
+			t.Run(setting.key+"/"+value, func(t *testing.T) {
+				t.Setenv(setting.key, value)
+				expectConfigPanic(t, setting.key)
+			})
+		}
+	}
+}
+
+func TestOverlapMustBeShorterThanAudioLimit(t *testing.T) {
+	t.Setenv("MAX_AUDIO_SECONDS", "1")
+	t.Setenv("BUFFER_OVERLAP_MS", "1000")
+	expectConfigPanic(t, "BUFFER_OVERLAP_MS")
+}
+
+func expectConfigPanic(t *testing.T, key string) {
+	t.Helper()
+	defer func() {
+		failure := recover()
+		if failure == nil {
+			t.Fatal("invalid configuration did not panic")
+		}
+		if message := fmt.Sprint(failure); !strings.Contains(message, key) {
+			t.Fatalf("panic must identify %s, got %q", key, message)
+		}
+	}()
+	FromEnv()
 }

@@ -30,10 +30,7 @@ func main() {
 }
 
 func run(ctx context.Context) error {
-	cfg, err := config.FromEnv()
-	if err != nil {
-		return err
-	}
+	cfg := config.FromEnv()
 
 	logOptions := &slog.HandlerOptions{Level: cfg.Level}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, logOptions)))

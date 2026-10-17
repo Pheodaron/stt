@@ -45,18 +45,15 @@ type Config struct {
 	ModelWorkers int
 }
 
-func FromEnv() (Config, error) {
+// FromEnv panics on invalid configuration, before startup acquires resources.
+func FromEnv() Config {
 	var c Config
-	var err error
 
 	// Server and logging.
 	c.Host = value("URL", "0.0.0.0")
 	c.Port = value("PORT", "8080")
 	c.ClientType = value("CLIENT_TYPE", "grpc")
-	c.PingInterval, err = seconds("PING_INTERVAL", 30)
-	if err != nil {
-		return c, err
-	}
+	c.PingInterval = seconds("PING_INTERVAL", 30)
 	switch value("LOG_LEVEL", "info") {
 	case "debug":
 		c.Level = slog.LevelDebug
@@ -67,61 +64,37 @@ func FromEnv() (Config, error) {
 	case "error", "critical":
 		c.Level = slog.LevelError
 	default:
-		return c, fmt.Errorf("invalid LOG_LEVEL")
+		panic("LOG_LEVEL must be debug, info, warn, error or critical")
 	}
 
 	// Request limits.
-	c.MaxSegmentBytes, err = integer("MAX_SEGMENT_BYTES", 4<<20)
-	if err != nil {
-		return c, err
-	}
-	c.MaxAudioSeconds, err = integer("MAX_AUDIO_SECONDS", 25)
-	if err != nil {
-		return c, err
-	}
-	c.RequestTimeout, err = seconds("REQUEST_TIMEOUT", 60)
-	if err != nil {
-		return c, err
-	}
+	c.MaxSegmentBytes = integer("MAX_SEGMENT_BYTES", 4<<20)
+	c.MaxAudioSeconds = integer("MAX_AUDIO_SECONDS", 25)
+	c.RequestTimeout = seconds("REQUEST_TIMEOUT", 60)
 
 	// Recognition windows.
-	c.BufferSize, err = integer("BUFFER_SIZE", 10)
-	if err != nil {
-		return c, err
-	}
-	c.OverlapMS, err = integer("BUFFER_OVERLAP_MS", 500)
-	if err != nil {
-		return c, err
-	}
+	c.BufferSize = integer("BUFFER_SIZE", 10)
+	c.OverlapMS = integer("BUFFER_OVERLAP_MS", 500)
 
 	// Voice activity detection.
 	c.VADModel = value("VAD_MODEL_PATH", "/app/models/silero-v6.2.3/silero_vad.onnx")
 	threshold, err := strconv.ParseFloat(value("VAD_THRESHOLD", "0.35"), 32)
 	if err != nil {
-		return c, fmt.Errorf("VAD_THRESHOLD must be a finite number in [0.01, 1)")
+		panic("VAD_THRESHOLD must be a finite number in [0.01, 1)")
 	}
 	c.VADThreshold = float32(threshold)
-	c.PaddingMS, err = integer("PADDING_DURATION_MS", 250)
-	if err != nil {
-		return c, err
-	}
-	c.VADSilenceMS, err = integer("VAD_MIN_SILENCE_MS", 500)
-	if err != nil {
-		return c, err
-	}
+	c.PaddingMS = integer("PADDING_DURATION_MS", 250)
+	c.VADSilenceMS = integer("VAD_MIN_SILENCE_MS", 500)
 
 	// GigaAM inference; the container always contains the same FP32 model.
 	c.Provider = value("MODEL_PROVIDER", "cpu")
-	c.NumThreads, err = integer("NUM_THREADS", 2)
-	if err != nil {
-		return c, err
-	}
-	c.ModelWorkers, err = integer("MODEL_WORKERS", 1)
-	if err != nil {
-		return c, err
-	}
+	c.NumThreads = integer("NUM_THREADS", 2)
+	c.ModelWorkers = integer("MODEL_WORKERS", 1)
 
-	return c, c.Validate()
+	if err := c.Validate(); err != nil {
+		panic(err)
+	}
+	return c
 }
 
 func (c Config) Address() string {
@@ -143,8 +116,11 @@ func (c Config) validateInference() error {
 		return fmt.Errorf("MODEL_PROVIDER must be cpu or cuda")
 	}
 
-	if c.NumThreads < 1 || c.NumThreads > 64 || c.ModelWorkers < 1 || c.ModelWorkers > 16 {
-		return fmt.Errorf("NUM_THREADS must be 1..64 and MODEL_WORKERS 1..16")
+	if c.NumThreads < 1 || c.NumThreads > 64 {
+		return fmt.Errorf("NUM_THREADS must be 1..64")
+	}
+	if c.ModelWorkers < 1 || c.ModelWorkers > 16 {
+		return fmt.Errorf("MODEL_WORKERS must be 1..16")
 	}
 
 	return nil
@@ -164,6 +140,13 @@ func (c Config) validateServer() error {
 }
 
 func (c Config) validateAudio() error {
+	if c.MaxSegmentBytes < 1 || c.MaxSegmentBytes > 64<<20 {
+		return fmt.Errorf("MAX_SEGMENT_BYTES must be 1..67108864")
+	}
+	if c.MaxAudioSeconds < 1 || c.MaxAudioSeconds > 25 {
+		return fmt.Errorf("MAX_AUDIO_SECONDS must be 1..25")
+	}
+
 	if c.BufferSize < 1 || c.BufferSize > 64 {
 		return fmt.Errorf("BUFFER_SIZE must be 1..64")
 	}
@@ -174,19 +157,14 @@ func (c Config) validateAudio() error {
 	if c.VADSilenceMS < c.PaddingMS || c.VADSilenceMS > 3000 {
 		return fmt.Errorf("VAD_MIN_SILENCE_MS must be at least PADDING_DURATION_MS and at most 3000")
 	}
-	if math.IsNaN(float64(c.VADThreshold)) || c.VADThreshold < 0.01 || c.VADThreshold >= 1 || c.VADModel == "" {
-		return fmt.Errorf("VAD_MODEL_PATH and a VAD_THRESHOLD in [0.01, 1) are required")
+	if c.VADModel == "" {
+		return fmt.Errorf("VAD_MODEL_PATH is required")
+	}
+	if math.IsNaN(float64(c.VADThreshold)) || c.VADThreshold < 0.01 || c.VADThreshold >= 1 {
+		return fmt.Errorf("VAD_THRESHOLD must be a finite number in [0.01, 1)")
 	}
 	if c.OverlapMS < 0 || c.OverlapMS > 2000 || c.OverlapMS >= c.MaxAudioSeconds*1000 {
 		return fmt.Errorf("BUFFER_OVERLAP_MS must be 0..2000 and less than MAX_AUDIO_SECONDS")
-	}
-
-	if c.MaxSegmentBytes < 1 || c.MaxSegmentBytes > 64<<20 {
-		return fmt.Errorf("MAX_SEGMENT_BYTES must be 1..67108864")
-	}
-
-	if c.MaxAudioSeconds < 1 || c.MaxAudioSeconds > 25 {
-		return fmt.Errorf("MAX_AUDIO_SECONDS must be 1..25")
 	}
 
 	return nil
@@ -200,18 +178,18 @@ func value(key, fallback string) string {
 	return fallback
 }
 
-func integer(key string, fallback int) (int, error) {
+func integer(key string, fallback int) int {
 	number, err := strconv.Atoi(value(key, strconv.Itoa(fallback)))
 	if err != nil {
-		return 0, fmt.Errorf("%s must be an integer: %w", key, err)
+		panic(fmt.Sprintf("%s must be an integer", key))
 	}
-	return number, nil
+	return number
 }
 
-func seconds(key string, fallback int) (time.Duration, error) {
-	number, err := integer(key, fallback)
-	if err != nil || number < 1 || number > 3600 {
-		return 0, fmt.Errorf("%s must be 1..3600 seconds", key)
+func seconds(key string, fallback int) time.Duration {
+	number := integer(key, fallback)
+	if number < 1 || number > 3600 {
+		panic(fmt.Sprintf("%s must be 1..3600 seconds", key))
 	}
-	return time.Duration(number) * time.Second, nil
+	return time.Duration(number) * time.Second
 }

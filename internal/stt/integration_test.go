@@ -22,10 +22,7 @@ func TestRealChunkedPipeline(t *testing.T) {
 	if path == "" || vadPath == "" {
 		t.Skip("set MODEL_TEST_AUDIO and VAD_TEST_MODEL for the complete pipeline")
 	}
-	cfg, err := config.FromEnv()
-	if err != nil {
-		t.Fatal(err)
-	}
+	cfg := config.FromEnv()
 	model, err := gigaam.New(cfg)
 	if err != nil {
 		t.Fatal(err)

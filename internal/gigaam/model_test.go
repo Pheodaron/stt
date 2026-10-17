@@ -18,11 +18,8 @@ func TestCUDAUnavailabilityDoesNotFallBackToCPU(t *testing.T) {
 	}
 	t.Setenv("MODEL_PROVIDER", "cuda")
 	t.Setenv("NVIDIA_TF32_OVERRIDE", "0")
-	c, err := config.FromEnv()
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = New(c)
+	c := config.FromEnv()
+	_, err := New(c)
 	if err == nil || !strings.Contains(err.Error(), "CUDA requested") {
 		t.Fatalf("expected CUDA readiness failure before model load: %v", err)
 	}
@@ -34,10 +31,7 @@ func TestRealGigaAM(t *testing.T) {
 	if path == "" {
 		t.Skip("set MODEL_TEST_AUDIO and provide the bundled FP32 model to test actual inference")
 	}
-	c, err := config.FromEnv()
-	if err != nil {
-		t.Fatal(err)
-	}
+	c := config.FromEnv()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
