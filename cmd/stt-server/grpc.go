@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"math"
 	"net"
 	"time"
 
@@ -11,13 +12,15 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	"vks-stt-v2/internal/config"
+	"vks-stt-v2/internal/meeting"
 	"vks-stt-v2/internal/stt"
 	"vks-stt-v2/internal/transport"
 )
 
-func serveGRPC(ctx context.Context, listener net.Listener, service *stt.Service, cfg config.Config) error {
-	server := grpc.NewServer(grpc.MaxRecvMsgSize(cfg.MaxSegmentBytes + 1024))
-	transport.RegisterGRPC(server, service)
+func serveGRPC(ctx context.Context, listener net.Listener, service *stt.Service, cfg config.Config, meetings *meeting.Service) error {
+	server := grpc.NewServer(grpc.MaxRecvMsgSize(max(cfg.MaxSegmentBytes, cfg.MeetingChunkBytes)+1024), grpc.MaxSendMsgSize(math.MaxInt32), grpc.WaitForHandlers(true))
+	defer server.Stop() // Also cancel handlers if Serve fails before shutdown.
+	transport.RegisterGRPC(server, service, meetings)
 	reflection.Register(server)
 
 	healthServer := health.NewServer()
@@ -35,6 +38,9 @@ func serveGRPC(ctx context.Context, listener net.Listener, service *stt.Service,
 		return err
 	case <-ctx.Done():
 		healthServer.Shutdown()
+		if meetings != nil {
+			meetings.Stop()
+		}
 		stopGRPC(server)
 		return nil
 	}

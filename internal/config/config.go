@@ -12,9 +12,11 @@ import (
 
 // These assets are installed at fixed paths by both container images.
 const (
-	FFmpegPath = "/usr/local/bin/ffmpeg"
-	ModelDir   = "/app/models/gigaam-v3-fp32"
-	VadPath    = "/app/models/silero-v6.2.3/silero_vad.onnx"
+	FFmpegPath         = "/usr/local/bin/ffmpeg"
+	ModelDir           = "/app/models/gigaam-v3-fp32"
+	VadPath            = "/app/models/silero-v6.2.3/silero_vad.onnx"
+	DiarizationModel   = "/app/models/nemotron-3-diarization-f32/model.gguf"
+	DiarizationLibrary = "/app/lib/libnemo_speech_asr_c.so"
 )
 
 type Config struct {
@@ -44,6 +46,10 @@ type Config struct {
 	Provider     string
 	NumThreads   int
 	ModelWorkers int
+
+	// Recorded meetings; independent of live audio/ASR window limits.
+	MeetingChunkBytes int
+	MeetingTempDir    string
 }
 
 // FromEnv panics on invalid configuration before loading models or opening ports.
@@ -72,9 +78,11 @@ func FromEnv() Config {
 		VADSilenceMS: integer("VAD_MIN_SILENCE_MS", 500),
 
 		// GigaAM inference.
-		Provider:     value("MODEL_PROVIDER", "cpu"),
-		NumThreads:   integer("NUM_THREADS", 2),
-		ModelWorkers: integer("MODEL_WORKERS", 1),
+		Provider:          value("MODEL_PROVIDER", "cpu"),
+		NumThreads:        integer("NUM_THREADS", 2),
+		ModelWorkers:      integer("MODEL_WORKERS", 1),
+		MeetingChunkBytes: integer("MEETING_CHUNK_BYTES", 1<<20),
+		MeetingTempDir:    value("MEETING_TEMP_DIR", "/tmp/stt-meetings"),
 	}
 
 	if err := c.Validate(); err != nil {
@@ -98,6 +106,12 @@ func (c Config) Validate() error {
 }
 
 func (c Config) validateInference() error {
+	if c.MeetingChunkBytes < 1 || c.MeetingChunkBytes > 4<<20 {
+		return fmt.Errorf("MEETING_CHUNK_BYTES must be 1..4194304")
+	}
+	if c.MeetingTempDir == "" {
+		return fmt.Errorf("MEETING_TEMP_DIR is required")
+	}
 	if c.Provider != "cpu" && c.Provider != "cuda" {
 		return fmt.Errorf("MODEL_PROVIDER must be cpu or cuda")
 	}

@@ -17,4 +17,5 @@ services:
     ports:
       - "${HOST_PORT:-8080}:8080"
     init: true
-    stop_grace_period: 15s
+    # Allow a cancelled native inference call to return before SIGKILL.
+    stop_grace_period: 60s

@@ -6,6 +6,8 @@ option go_package = "vks-stt-v2/gen/stt/v1;sttv1";
 service Gigaam {
   rpc transcribe(stream VoiceChunk) returns (stream TranscribedText) {}
   rpc transcribe_unbuffered(VoiceChunk) returns (TranscribedText) {}
+  // Upload one complete recording, then receive its complete transcript.
+  rpc TranscribeMeeting(stream MeetingRequest) returns (MeetingResponse) {}
 }
 
 message VoiceChunk {
@@ -15,4 +17,38 @@ message VoiceChunk {
 message TranscribedText {
     optional string partial = 1;
     optional string message = 2;
+}
+
+message MeetingUploadHeader {
+  uint64 size_bytes = 1;
+}
+
+message MeetingRequest {
+  oneof payload {
+    MeetingUploadHeader header = 1;
+    bytes chunk = 2;
+  }
+}
+
+message SpeakerInterval {
+  int64 start_ms = 1;
+  int64 end_ms = 2;
+  uint32 speaker_id = 3;
+}
+
+message MeetingSegment {
+  int64 start_ms = 1;
+  int64 end_ms = 2;
+  // All speakers detected in this fragment; words are not assigned individually.
+  repeated uint32 speaker_ids = 3;
+  string text = 4;
+  bool has_overlap = 5;
+  bool forced_split = 6;
+}
+
+message MeetingResponse {
+  int64 duration_ms = 1;
+  repeated uint32 speaker_ids = 2;
+  repeated SpeakerInterval diarization = 3;
+  repeated MeetingSegment segments = 4;
 }

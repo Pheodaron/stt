@@ -1,4 +1,34 @@
 # syntax=docker/dockerfile:1
+FROM docker.io/library/python:3.11.13-slim-bookworm AS nemo-build
+RUN --mount=type=secret,id=proxy_ca \
+    if [ -f /run/secrets/proxy_ca ]; then export APT_CONFIG=/tmp/apt-proxy-ca.conf; printf 'Acquire::https::CaInfo "/run/secrets/proxy_ca";\n' > "$APT_CONFIG"; fi; \
+    apt-get update && apt-get install -y --no-install-recommends \
+      build-essential git ninja-build libsentencepiece-dev ca-certificates && \
+    rm -rf /var/lib/apt/lists/* /tmp/apt-proxy-ca.conf
+RUN --mount=type=secret,id=proxy_ca \
+    if [ -f /run/secrets/proxy_ca ]; then export PIP_CERT=/run/secrets/proxy_ca; fi; \
+    pip install --no-cache-dir cmake==3.31.6
+COPY script/nemo-version.env script/build-nemo.sh /opt/stt/
+ARG NEMO_BUILD_JOBS=2
+RUN --mount=type=secret,id=proxy_ca \
+    if [ -f /run/secrets/proxy_ca ]; then export GIT_SSL_CAINFO=/run/secrets/proxy_ca; fi; \
+    sh /opt/stt/build-nemo.sh
+
+FROM nemo-build AS nemotron-tools
+RUN --mount=type=secret,id=proxy_ca \
+    if [ -f /run/secrets/proxy_ca ]; then export PIP_CERT=/run/secrets/proxy_ca; fi; \
+    pip install --no-cache-dir torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu && \
+    pip install --no-cache-dir /opt/nemo-source/llama.cpp/gguf-py numpy==2.2.6 PyYAML==6.0.2 huggingface-hub==0.36.0
+COPY script/prepare-nemotron.sh script/validate-nemotron.py /opt/stt/
+COPY internal/diarization/sdk/MODEL-LICENSE.OpenMDW-1.1 /opt/stt/MODEL-LICENSE.OpenMDW-1.1
+RUN cd /opt/nemo-source && python3 -c 'from conversion import diarization'
+
+FROM nemotron-tools AS nemotron-model
+RUN --mount=type=cache,id=nemotron-checkpoints,target=/checkpoints,sharing=locked \
+    --mount=type=secret,id=proxy_ca \
+    if [ -f /run/secrets/proxy_ca ]; then export SSL_CERT_FILE=/run/secrets/proxy_ca REQUESTS_CA_BUNDLE=/run/secrets/proxy_ca; fi; \
+    sh /opt/stt/prepare-nemotron.sh
+
 FROM docker.io/library/python:3.11.13-slim-bookworm AS model-tools
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1 \
     PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 XDG_CACHE_HOME=/tmp/.cache
@@ -59,6 +89,9 @@ RUN --mount=type=secret,id=proxy_ca \
 WORKDIR /app
 # Keep the immutable model layer before application files for cache reuse.
 COPY --from=model-export /model/gigaam-v3-fp32/ /app/models/gigaam-v3-fp32/
+COPY --from=nemotron-model /model/nemotron-3-diarization-f32/ /app/models/nemotron-3-diarization-f32/
+COPY --from=nemo-build /opt/nemo/lib/ /app/lib/
+COPY --from=nemo-build /opt/nemo/share/licenses/ /app/licenses/nemo/
 COPY --from=vad-model /opt/vad/models/silero-v6.2.3/ /app/models/silero-v6.2.3/
 COPY --from=build /out/ /app/
 COPY --from=ffmpeg-build /opt/ffmpeg/bin/ffmpeg /usr/local/bin/ffmpeg

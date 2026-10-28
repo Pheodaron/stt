@@ -18,7 +18,7 @@ cd "$temporary"
   --disable-shared --enable-static --disable-autodetect \
   --disable-programs --enable-ffmpeg --disable-doc --disable-debug --enable-small \
   --disable-network --disable-avdevice --disable-swscale \
-  --disable-protocols --enable-protocol=pipe \
+  --disable-protocols --enable-protocol=pipe,file \
   --disable-encoders --enable-encoder=pcm_s16le \
   --disable-muxers --enable-muxer=pcm_s16le \
   --disable-filters --enable-filter=aresample,aformat,anull

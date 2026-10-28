@@ -13,8 +13,11 @@ import (
 
 	"vks-stt-v2/internal/audio"
 	"vks-stt-v2/internal/config"
+	"vks-stt-v2/internal/diarization"
 	"vks-stt-v2/internal/gigaam"
+	"vks-stt-v2/internal/inference"
 	"vks-stt-v2/internal/logger"
+	"vks-stt-v2/internal/meeting"
 	"vks-stt-v2/internal/stt"
 )
 
@@ -59,14 +62,32 @@ func run(ctx context.Context) error {
 	}
 	defer listener.Close()
 
-	service := newService(cfg, model, vad)
+	priority := inference.NewPriority(model, cfg.ModelWorkers)
+	service := newService(cfg, priority, vad)
+	var meetings *meeting.Service
+	if cfg.ClientType == "grpc" {
+		diarizer, err := diarization.New(config.DiarizationLibrary, config.DiarizationModel)
+		if err != nil {
+			return err
+		}
+		defer diarizer.Close()
+		meetings = &meeting.Service{
+			FFmpeg: config.FFmpegPath, TempDir: cfg.MeetingTempDir,
+			ChunkBytes: cfg.MeetingChunkBytes, MaxSeconds: cfg.MaxAudioSeconds,
+			Diarizer: diarizer, Model: priority.Batch(), FindPause: vad.FindPause,
+		}
+		if err := meetings.Init(); err != nil {
+			return err
+		}
+		defer meetings.Close()
+	}
 	logReady(cfg, listener.Addr())
 
 	if cfg.ClientType == "websocket" {
 		return serveWebSocket(ctx, listener, service, cfg)
 	}
 
-	return serveGRPC(ctx, listener, service, cfg)
+	return serveGRPC(ctx, listener, service, cfg, meetings)
 }
 
 func newService(cfg config.Config, model stt.Model, vad stt.VAD) *stt.Service {

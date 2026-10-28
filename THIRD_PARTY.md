@@ -7,6 +7,9 @@
 |---|---|
 | sherpa-onnx / Go bindings | [Apache-2.0](https://github.com/k2-fsa/sherpa-onnx/blob/master/LICENSE) |
 | ONNX Runtime (поставляется с sherpa) | [MIT](https://github.com/microsoft/onnxruntime/blob/main/LICENSE) |
+| NVIDIA NeMo-Speech.cpp CPU SDK и публичные C ABI headers | [Apache-2.0](internal/diarization/sdk/LICENSE), commit закреплён в [nemo-version.env](script/nemo-version.env) |
+| Nemotron-3-Diarization, GGUF F32 | [OpenMDW-1.1](internal/diarization/sdk/MODEL-LICENSE.OpenMDW-1.1); лицензия и оригинальная model card копируются рядом с весами |
+| ggml / llama.cpp и SentencePiece (NeMo SDK) | MIT / Apache-2.0; SDK устанавливает notices, дополнительно включён copyright системной SentencePiece из build-stage |
 | ONNX Runtime C API header v1.20.1 (проверка CUDA) | [MIT](internal/gigaam/ort/LICENSE), источник закреплён в internal/gigaam/ort/README.md |
 | NVIDIA CUDA / cuDNN (GPU-образ) | [лицензии NVIDIA](https://docs.nvidia.com/cuda/eula/index.html); отдельны от лицензии проекта |
 | GigaAM и экспорт модели | [MIT](https://github.com/salute-developers/GigaAM/blob/main/LICENSE), LICENSE также скачивается вместе с моделью |
