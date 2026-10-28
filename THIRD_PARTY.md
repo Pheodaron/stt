@@ -12,7 +12,8 @@
 | ggml / llama.cpp и SentencePiece (NeMo SDK) | MIT / Apache-2.0; SDK устанавливает notices, дополнительно включён copyright системной SentencePiece из build-stage |
 | ONNX Runtime C API header v1.20.1 (проверка CUDA) | [MIT](internal/gigaam/ort/LICENSE), источник закреплён в internal/gigaam/ort/README.md |
 | NVIDIA CUDA / cuDNN (GPU-образ) | [лицензии NVIDIA](https://docs.nvidia.com/cuda/eula/index.html); отдельны от лицензии проекта |
-| GigaAM и экспорт модели | [MIT](https://github.com/salute-developers/GigaAM/blob/main/LICENSE), LICENSE также скачивается вместе с моделью |
+| GigaAM | [MIT](script/licenses/GigaAM.LICENSE), LICENSE копируется рядом с моделью |
+| Локальный ONNX-exporter GigaAM, адаптированный из sherpa-onnx | [Apache-2.0](script/licenses/sherpa-onnx.LICENSE), источник закреплён в [export-model-fp32.py](script/export-model-fp32.py) |
 | PyTorch / torchaudio (только этап сборки модели) | [PyTorch BSD](https://github.com/pytorch/pytorch/blob/main/LICENSE), [torchaudio BSD](https://github.com/pytorch/audio/blob/main/LICENSE) |
 | Silero VAD v6.2.3 FP32 ONNX | [MIT](https://github.com/snakers4/silero-vad/blob/v6.2.3/LICENSE); этап `vad-model` включает LICENSE рядом с весами |
 | gRPC Go | [Apache-2.0](https://github.com/grpc/grpc-go/blob/master/LICENSE) |

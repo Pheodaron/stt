@@ -98,7 +98,8 @@ Ctrl+C останавливает сервис. `mise run stop` останавл
 
 1. Python 3.11.13, CPU PyTorch/torchaudio 2.8.0 и закреплённая ревизия GigaAM
    устанавливаются в `model-tools`.
-2. В `model-export` загружается закреплённый exporter sherpa; проверяется SHA-256.
+2. В `model-export` запускается локальный [export-model-fp32.py](script/export-model-fp32.py).
+   Экспортёр и лицензии хранятся в репозитории; скачивания и подмены кода при сборке нет.
    Checkpoint `v3_e2e_rnnt` и tokenizer сохраняются в кеш сборщика
    `gigaam-v3-checkpoints`, без внешнего каталога или отдельного запуска контейнера.
 3. Экспортируются `encoder`, `decoder`, `joiner` с FP32-весами.

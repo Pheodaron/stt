@@ -30,7 +30,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python3 -m pip install 'torch==2.8.0' 'torchaudio==2.8.0' \
       --index-url https://download.pytorch.org/whl/cpu && \
     python3 -m pip install 'gigaam @ git+https://github.com/salute-developers/GigaAM.git@7447938d791c4f3e643386ee22c33777004293a5'
-COPY --chmod=755 script/export-model-fp32.sh script/prepare-model-fp32.py script/validate-model-fp32.py /opt/model-export/
+COPY script/export-model-fp32.sh script/export-model-fp32.py script/validate-model-fp32.py /opt/model-export/
+COPY script/licenses/ /opt/model-export/licenses/
 
 FROM model-tools AS vad-model
 WORKDIR /opt/vad
