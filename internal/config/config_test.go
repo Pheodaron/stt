@@ -14,6 +14,7 @@ var envKeys = []string{
 	"BUFFER_SIZE", "BUFFER_OVERLAP_MS",
 	"VAD_THRESHOLD", "PADDING_DURATION_MS", "VAD_MIN_SILENCE_MS",
 	"MODEL_PROVIDER", "NUM_THREADS", "MODEL_WORKERS",
+	"MEETING_CHUNK_BYTES", "MEETING_TEMP_DIR",
 }
 
 func clearEnv(t *testing.T) {
@@ -40,6 +41,7 @@ func TestEmptyAndUnsetSettingsUseDefaults(t *testing.T) {
 		VADModel: "/app/models/silero-v6.2.3/silero_vad.onnx", VADThreshold: 0.35,
 		PaddingMS: 250, VADSilenceMS: 500,
 		Provider: "cpu", NumThreads: 2, ModelWorkers: 1,
+		MeetingChunkBytes: 1 << 20, MeetingTempDir: "/tmp/stt-meetings",
 	}
 	if empty != want || unset != want {
 		t.Fatalf("empty: %+v\nunset: %+v\nwant: %+v", empty, unset, want)
@@ -55,6 +57,7 @@ func TestFromEnvReadsConfiguredValues(t *testing.T) {
 		"BUFFER_SIZE": "4", "BUFFER_OVERLAP_MS": "200",
 		"VAD_THRESHOLD": "0.25", "PADDING_DURATION_MS": "100", "VAD_MIN_SILENCE_MS": "300",
 		"MODEL_PROVIDER": "cuda", "NUM_THREADS": "3", "MODEL_WORKERS": "2",
+		"MEETING_CHUNK_BYTES": "262144", "MEETING_TEMP_DIR": "/tmp/meetings-test",
 	}
 	for key, value := range settings {
 		t.Setenv(key, value)
@@ -68,6 +71,7 @@ func TestFromEnvReadsConfiguredValues(t *testing.T) {
 		VADModel: "/app/models/silero-v6.2.3/silero_vad.onnx", VADThreshold: 0.25,
 		PaddingMS: 100, VADSilenceMS: 300,
 		Provider: "cuda", NumThreads: 3, ModelWorkers: 2,
+		MeetingChunkBytes: 262144, MeetingTempDir: "/tmp/meetings-test",
 	}
 	if c != want || c.Address() != "[::1]:9000" {
 		t.Fatalf("got: %+v\nwant: %+v", c, want)
@@ -116,6 +120,7 @@ func TestInvalidFormatsPanic(t *testing.T) {
 		"BUFFER_SIZE", "BUFFER_OVERLAP_MS",
 		"VAD_THRESHOLD", "PADDING_DURATION_MS", "VAD_MIN_SILENCE_MS",
 		"MODEL_PROVIDER", "NUM_THREADS", "MODEL_WORKERS",
+		"MEETING_CHUNK_BYTES",
 	} {
 		t.Run(key, func(t *testing.T) {
 			t.Setenv(key, "invalid")
@@ -141,6 +146,7 @@ func TestOutOfRangeSettingsPanic(t *testing.T) {
 		{"VAD_MIN_SILENCE_MS", []string{"249", "3001"}},
 		{"NUM_THREADS", []string{"0", "65", "9223372036854775808"}},
 		{"MODEL_WORKERS", []string{"0", "17"}},
+		{"MEETING_CHUNK_BYTES", []string{"0", "4194305"}},
 		{"VAD_THRESHOLD", []string{"NaN", "+Inf", "-Inf", "0", "1", "0.001"}},
 	}
 	for _, setting := range settings {
