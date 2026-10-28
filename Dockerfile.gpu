@@ -12,9 +12,10 @@ RUN sh /opt/stt/build-nemo.sh
 FROM nemo-build AS nemotron-tools
 RUN pip install --no-cache-dir torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu && \
     pip install --no-cache-dir /opt/nemo-source/llama.cpp/gguf-py numpy==2.2.6 PyYAML==6.0.2 huggingface-hub==0.36.0
-COPY script/prepare-nemotron.sh script/validate-nemotron.py /opt/stt/
+COPY script/prepare-nemotron.sh script/validate-nemotron.py script/test_validate_nemotron.py /opt/stt/
 COPY internal/diarization/sdk/MODEL-LICENSE.OpenMDW-1.1 /opt/stt/MODEL-LICENSE.OpenMDW-1.1
-RUN cd /opt/nemo-source && python3 -c 'from conversion import diarization'
+RUN python3 /opt/stt/test_validate_nemotron.py && \
+    cd /opt/nemo-source && python3 -c 'from conversion import diarization'
 
 FROM nemotron-tools AS nemotron-model
 RUN --mount=type=cache,id=nemotron-checkpoints,target=/checkpoints,sharing=locked \

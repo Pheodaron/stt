@@ -8,6 +8,8 @@ cd /opt/nemo-source
 python3 convert_model.py nvidia/Nemotron-3-Diarization \
   --architecture diarization --revision "$NEMOTRON_REVISION" \
   --cache-dir /checkpoints/nemotron --outtype f32 --outfile "$model_dir/model.gguf"
+# The official f32 profile retains subpixel_upsample.weight as F16 for ggml's
+# CPU convolution. Validate this exact exception and record actual tensor types.
 python3 /opt/stt/validate-nemotron.py "$model_dir/model.gguf" "$NEMO_REVISION" "$NEMOTRON_REVISION"
 # The pinned model repository declares OpenMDW-1.1 but has no LICENSE file.
 cp /opt/stt/MODEL-LICENSE.OpenMDW-1.1 "$model_dir/LICENSE"
