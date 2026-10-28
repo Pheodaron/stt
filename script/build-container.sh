@@ -1,5 +1,4 @@
 #!/bin/sh
-# Used by the build stages in Dockerfile.cpu and Dockerfile.gpu.
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -18,6 +17,4 @@ CGO_ENABLED=1 CGO_LDFLAGS="${CGO_LDFLAGS:-} -Wl,-rpath,\$ORIGIN/lib" \
 
 native_dir=$(go list -m -f '{{.Dir}}' github.com/k2-fsa/sherpa-onnx-go-linux)
 cp "$native_dir/lib/$target/"*.so /out/lib/
-cp "$native_dir/LICENSE" /out/lib/LICENSE.sherpa-onnx
 chmod 755 /out /out/lib /out/stt-server /out/lib/*.so
-chmod 644 /out/lib/LICENSE.sherpa-onnx

@@ -1,56 +1,44 @@
 # syntax=docker/dockerfile:1
-# Nemotron runs on CPU first; GigaAM retains its existing CUDA backend.
+# 1. CPU SDK for Nemotron.
 FROM docker.io/library/python:3.11.13-slim-bookworm AS nemo-build
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      build-essential git ninja-build libsentencepiece-dev ca-certificates && \
+    build-essential git ninja-build libsentencepiece-dev ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir cmake==3.31.6
-COPY script/nemo-version.env script/build-nemo.sh /opt/stt/
+COPY script/build-nemo.sh /build-nemo.sh
 ARG NEMO_BUILD_JOBS=2
-RUN sh /opt/stt/build-nemo.sh
+RUN sh /build-nemo.sh
 
-FROM nemo-build AS nemotron-tools
+# 2. Nemotron checkpoint -> GGUF.
+FROM nemo-build AS nemotron-model
 RUN pip install --no-cache-dir torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu && \
     pip install --no-cache-dir /opt/nemo-source/llama.cpp/gguf-py numpy==2.2.6 PyYAML==6.0.2 huggingface-hub==0.36.0
-COPY script/prepare-nemotron.sh script/validate-nemotron.py script/test_validate_nemotron.py /opt/stt/
-COPY internal/diarization/sdk/MODEL-LICENSE.OpenMDW-1.1 /opt/stt/MODEL-LICENSE.OpenMDW-1.1
-RUN python3 /opt/stt/test_validate_nemotron.py && \
-    cd /opt/nemo-source && python3 -c 'from conversion import diarization'
-
-FROM nemotron-tools AS nemotron-model
+WORKDIR /opt/nemo-source
 RUN --mount=type=cache,id=nemotron-checkpoints,target=/checkpoints,sharing=locked \
-    sh /opt/stt/prepare-nemotron.sh
+    mkdir -p /model/nemotron-3-diarization-f32 && \
+    python3 convert_model.py nvidia/Nemotron-3-Diarization --architecture diarization \
+      --revision a435e9867d79e789e90053f9b6d6834053af564a --outtype f32 \
+      --cache-dir /checkpoints/nemotron --outfile /model/nemotron-3-diarization-f32/model.gguf
 
-FROM docker.io/library/python:3.11.13-slim-bookworm AS model-tools
-ENV PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1 \
-    PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 XDG_CACHE_HOME=/tmp/.cache
-WORKDIR /tmp
+# 3. GigaAM checkpoint -> FP32 ONNX.
+FROM docker.io/library/python:3.11.13-slim-bookworm AS gigaam-model
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl git libgomp1 libsndfile1 && \
-    rm -rf /var/lib/apt/lists/*
-RUN python3 -m pip install 'torch==2.8.0' 'torchaudio==2.8.0' \
-      --index-url https://download.pytorch.org/whl/cpu && \
-    python3 -m pip install 'gigaam @ git+https://github.com/salute-developers/GigaAM.git@7447938d791c4f3e643386ee22c33777004293a5'
-COPY script/export-model-fp32.sh script/export-model-fp32.py script/validate-model-fp32.py /opt/model-export/
-COPY script/licenses/ /opt/model-export/licenses/
-
-FROM model-tools AS vad-model
-WORKDIR /opt/vad
-COPY script/prepare-vad.sh script/prepare-vad.sh
-RUN sh script/prepare-vad.sh
-
-FROM model-tools AS model-export
+    ca-certificates git libgomp1 libsndfile1 && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cpu && \
+    pip install --no-cache-dir 'gigaam @ git+https://github.com/salute-developers/GigaAM.git@7447938d791c4f3e643386ee22c33777004293a5'
+COPY script/export-model-fp32.py /export-model-fp32.py
+WORKDIR /model/gigaam-v3-fp32
 RUN --mount=type=cache,id=gigaam-v3-checkpoints,target=/checkpoints,sharing=locked \
-    sh /opt/model-export/export-model-fp32.sh /model/gigaam-v3-fp32
+    GIGAAM_EXPORT_CHECKPOINTS=/checkpoints python3 /export-model-fp32.py
 
-FROM docker.io/library/debian:bookworm-slim AS ffmpeg-build
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      build-essential musl-tools nasm pkg-config curl ca-certificates && \
+# 4. Ready-to-use Silero ONNX.
+FROM docker.io/library/debian:bookworm-slim AS vad-model
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && \
     rm -rf /var/lib/apt/lists/*
-COPY --chmod=644 script/build-ffmpeg.sh /usr/local/bin/build-ffmpeg
-ARG FFMPEG_BUILD_JOBS=2
-RUN sh /usr/local/bin/build-ffmpeg
+COPY script/prepare-vad.sh /prepare-vad.sh
+RUN sh /prepare-vad.sh
 
+# 5. Go server and sherpa-onnx libraries.
 FROM docker.io/library/golang:1.25-bookworm AS build
 WORKDIR /src
 ARG GOPROXY=https://proxy.golang.org,direct
@@ -59,24 +47,18 @@ COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     sh script/build-container.sh
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=secret,id=cuda_archive \
-    if [ -f /run/secrets/cuda_archive ]; then export SHERPA_CUDA_ARCHIVE=/run/secrets/cuda_archive; fi; \
-    sh script/install-cuda-libs.sh
+RUN --mount=type=cache,target=/go/pkg/mod sh script/install-cuda-libs.sh
 
+# 6. GigaAM uses CUDA; Nemotron uses CPU.
 FROM docker.io/nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libstdc++6 && \
-    rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certificates libstdc++6 && \
+    rm -rf /var/lib/apt/lists/* && ln -s /usr/bin/ffmpeg /usr/local/bin/ffmpeg
 WORKDIR /app
-# Keep the immutable model layer before application files for cache reuse.
-COPY --from=model-export /model/gigaam-v3-fp32/ /app/models/gigaam-v3-fp32/
 COPY --from=nemotron-model /model/nemotron-3-diarization-f32/ /app/models/nemotron-3-diarization-f32/
+COPY --from=gigaam-model /model/gigaam-v3-fp32/ /app/models/gigaam-v3-fp32/
+COPY --from=vad-model /model/silero-v6.2.3/ /app/models/silero-v6.2.3/
 COPY --from=nemo-build /opt/nemo/lib/ /app/lib/
-COPY --from=nemo-build /opt/nemo/share/licenses/ /app/licenses/nemo/
-COPY --from=vad-model /opt/vad/models/silero-v6.2.3/ /app/models/silero-v6.2.3/
 COPY --from=build /out/ /app/
-COPY --from=ffmpeg-build /opt/ffmpeg/bin/ffmpeg /usr/local/bin/ffmpeg
-COPY --from=ffmpeg-build /opt/ffmpeg/licenses/ /app/licenses/ffmpeg/
 ENV LD_LIBRARY_PATH=/app/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/lib64 \
     URL=0.0.0.0 PORT=8080 MODEL_PROVIDER=cuda \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility NVIDIA_TF32_OVERRIDE=0

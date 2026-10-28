@@ -30,15 +30,3 @@ run = "podman compose -f compose.yaml logs --follow stt"
 [tasks.stop]
 description = "Remove the server container and Compose network"
 run = "podman compose -f compose.yaml down --timeout 15"
-
-[tasks.proto]
-description = "Regenerate Go protobuf sources"
-tools.go = "1.25.1"
-run = '''
-protoc -I proto \
-  --plugin=protoc-gen-go="$(go tool -n protoc-gen-go)" \
-  --plugin=protoc-gen-go-grpc="$(go tool -n protoc-gen-go-grpc)" \
-  --go_out=. --go_opt=module=vks-stt-v2 \
-  --go-grpc_out=. --go-grpc_opt=module=vks-stt-v2 \
-  proto/stt/v1/stt.proto
-'''
