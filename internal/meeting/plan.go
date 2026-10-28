@@ -68,22 +68,53 @@ func union(a, b []uint32) []uint32 {
 	return slices.Compact(ids)
 }
 
-// group keeps short backchannels in context where the combined fragment fits.
-// The swallowed spans are not independently submitted to ASR.
-func group(base []Span, limit int64) []Span {
+// splitShortOverlaps assigns each half of a short two-speaker overlap to one speaker.
+func splitShortOverlaps(base []Span) []Span {
 	var result []Span
-	for i := 0; i < len(base); i++ {
-		v := base[i]
-		if v.Overlap && v.End-v.Start < audio.SampleRate && len(result) > 0 && i+1 < len(base) {
-			prev, next := &result[len(result)-1], base[i+1]
-			if prev.End == v.Start && v.End == next.Start && next.End-prev.Start <= limit {
-				prev.End = next.End
-				prev.Speakers = union(union(prev.Speakers, v.Speakers), next.Speakers)
-				prev.Overlap = true
-				i++
-				continue
+	for i, v := range base {
+		if len(v.Speakers) != 2 || v.End-v.Start >= audio.SampleRate {
+			result = append(result, v)
+			continue
+		}
+		first, second := v.Speakers[0], v.Speakers[1]
+		// Continue the preceding speaker into the first half where possible.
+		if i > 0 && base[i-1].End == v.Start && len(base[i-1].Speakers) == 1 {
+			if base[i-1].Speakers[0] == second {
+				first, second = second, first
+			}
+		} else if i+1 < len(base) && base[i+1].Start == v.End && len(base[i+1].Speakers) == 1 && base[i+1].Speakers[0] == first {
+			first, second = second, first
+		}
+		mid := v.Start + (v.End-v.Start)/2
+		if mid > v.Start {
+			result = append(result, Span{Start: v.Start, End: mid, Speakers: []uint32{first}})
+		}
+		result = append(result, Span{Start: mid, End: v.End, Speakers: []uint32{second}})
+	}
+	return result
+}
+
+// speakerIntervals keeps the returned diarization consistent with ASR attribution.
+func speakerIntervals(base []Span) []diarization.Segment {
+	var result []diarization.Segment
+	var last [9]int
+	for _, v := range base {
+		for _, id := range v.Speakers {
+			if n := last[id]; n > 0 && result[n-1].End == v.Start {
+				result[n-1].End = v.End
+			} else {
+				result = append(result, diarization.Segment{Start: v.Start, End: v.End, Speaker: id})
+				last[id] = len(result)
 			}
 		}
+	}
+	return result
+}
+
+// group joins nearby spans with the same speakers.
+func group(base []Span) []Span {
+	var result []Span
+	for _, v := range base {
 		if len(result) > 0 {
 			prev := &result[len(result)-1]
 			if v.Start-prev.End <= audio.SampleRate/4 && slices.Equal(prev.Speakers, v.Speakers) {

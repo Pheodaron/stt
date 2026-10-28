@@ -95,14 +95,23 @@ func TestMeetingKeepsTimelineAndOverlapSpeakers(t *testing.T) {
 		t.Fatal("temporary files leaked")
 	}
 }
-func TestShortInterruptionRecognizedOnceWithAllSpeakers(t *testing.T) {
+func TestShortInterruptionSplitEqually(t *testing.T) {
 	s := testService(t, 10*audio.SampleRate, []diarization.Segment{interval(1, 8, 1), {Start: 4 * audio.SampleRate, End: 4*audio.SampleRate + audio.SampleRate/2, Speaker: 2}})
 	r, err := finishUpload(t, s)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(r.Segments) != 1 || !r.Segments[0].Overlap || !reflect.DeepEqual(r.Segments[0].Speakers, []uint32{1, 2}) {
+	if len(r.Segments) != 3 {
 		t.Fatalf("%+v", r.Segments)
+	}
+	mid := int64(4*audio.SampleRate + audio.SampleRate/4)
+	if r.Segments[0].End != mid || r.Segments[1].Start != mid || r.Segments[1].End != 4*audio.SampleRate+audio.SampleRate/2 {
+		t.Fatalf("%+v", r.Segments)
+	}
+	for i, id := range []uint32{1, 2, 1} {
+		if r.Segments[i].Overlap || !reflect.DeepEqual(r.Segments[i].Speakers, []uint32{id}) {
+			t.Fatalf("%+v", r.Segments)
+		}
 	}
 }
 func TestLongTurnDoesNotLoseOrDuplicateCoreSamples(t *testing.T) {
@@ -225,5 +234,19 @@ func TestWorkspaceLockAndCrashCleanup(t *testing.T) {
 	defer other.Close()
 	if _, err := os.Stat(stale); !os.IsNotExist(err) {
 		t.Fatal("crash leftovers not removed")
+	}
+}
+
+func TestOverlapThreshold(t *testing.T) {
+	for _, duration := range []int64{audio.SampleRate - 1, audio.SampleRate, audio.SampleRate + 1} {
+		base := []Span{{Start: 0, End: duration, Speakers: []uint32{1, 2}, Overlap: true}}
+		got := splitShortOverlaps(base)
+		if duration < audio.SampleRate {
+			if len(got) != 2 || got[0].End != duration/2 || got[1].Start != duration/2 || got[1].End != duration || got[0].Overlap || got[1].Overlap {
+				t.Fatalf("duration %d: %+v", duration, got)
+			}
+		} else if !reflect.DeepEqual(got, base) {
+			t.Fatalf("duration %d: %+v", duration, got)
+		}
 	}
 }

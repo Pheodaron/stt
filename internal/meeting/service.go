@@ -229,6 +229,8 @@ func (s *Service) process(ctx context.Context, dir string) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
+	base = splitShortOverlaps(base)
+	intervals = speakerIntervals(base)
 	sort.Slice(intervals, func(i, j int) bool {
 		if intervals[i].Start == intervals[j].Start {
 			return intervals[i].Speaker < intervals[j].Speaker
@@ -249,7 +251,7 @@ func (s *Service) process(ctx context.Context, dir string) (*Result, error) {
 	padding := min(int64(audio.SampleRate/5), maxSamples/10)
 	coreLimit := maxSamples - 2*padding
 	var pieces []Transcript
-	for _, v := range group(base, coreLimit) {
+	for _, v := range group(base) {
 		for start := v.Start; start < v.End; {
 			if err := ctx.Err(); err != nil {
 				return nil, err
