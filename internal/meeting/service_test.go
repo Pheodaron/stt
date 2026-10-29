@@ -1,6 +1,7 @@
 package meeting
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -67,6 +68,43 @@ func finishUpload(t *testing.T, s *Service) (*Result, error) {
 		}
 	}
 	return u.Finish(context.Background())
+}
+
+func TestMeetingRecognizesConsecutiveSpeakerIntervalsTogether(t *testing.T) {
+	intervals := []diarization.Segment{
+		interval(2, 4, 1), interval(5, 7, 1),
+		{Start: 15 * audio.SampleRate / 2, End: 19 * audio.SampleRate / 2, Speaker: 1},
+	}
+	s := testService(t, 12*audio.SampleRate, intervals)
+	pcm := make([]byte, 12*audio.SampleRate*2)
+	for i, v := range intervals {
+		for sample := v.Start; sample < v.End; sample++ {
+			pcm[sample*2] = byte(i + 1)
+		}
+	}
+	s.Decode = func(_ context.Context, _, _, output string) (int64, error) {
+		return int64(len(pcm) / 2), os.WriteFile(output, pcm, 0600)
+	}
+	calls := 0
+	s.Model = modelFunc(func(_ context.Context, got []byte) (string, error) {
+		calls++
+		const padding = audio.SampleRate / 5
+		want := pcm[(intervals[0].Start-padding)*2 : (intervals[2].End+padding)*2]
+		if !bytes.Equal(got, want) {
+			t.Fatalf("ASR must receive the whole turn with original pauses and context; got %d bytes, want %d", len(got), len(want))
+		}
+		return "Одна связная реплика", nil
+	})
+	r, err := finishUpload(t, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 || len(r.Segments) != 1 || r.Segments[0].Start != intervals[0].Start || r.Segments[0].End != intervals[2].End || r.Segments[0].Text != "Одна связная реплика" {
+		t.Fatalf("ASR calls=%d, segments=%+v", calls, r.Segments)
+	}
+	if !reflect.DeepEqual(r.Diarization, intervals) {
+		t.Fatalf("original speech intervals changed: %+v", r.Diarization)
+	}
 }
 
 func TestMeetingKeepsTimelineAndOverlapSpeakers(t *testing.T) {
