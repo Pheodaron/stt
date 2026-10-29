@@ -94,16 +94,22 @@ func TestCLIUploadsChunksAndPrintsCompleteResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var got sttv1.MeetingResponse
-	if err := protojson.Unmarshal(out.Bytes(), &got); err != nil {
-		t.Fatalf("stdout must contain only the complete JSON response: %v; %s", err, out.Bytes())
-	}
-	if !proto.Equal(want, &got) || stderr.Len() != 0 {
-		t.Fatalf("response=%v stderr=%s", &got, stderr.String())
+	wantText := "Длительность: 00:00:01.200\nГоворящие: Говорящий 1, Говорящий 2\n\n" +
+		"[00:00:00.100 — 00:00:01.200] Говорящий 1, Говорящий 2 | одновременная речь | разрез по лимиту длительности\nПривет, мир!\n\n"
+	if out.String() != wantText || stderr.Len() != 0 {
+		t.Fatalf("stdout=%s stderr=%s", out.String(), stderr.String())
 	}
 	saved, err := os.ReadFile(path + ".transcription.json")
-	if err != nil || !bytes.Equal(saved, out.Bytes()) {
-		t.Fatalf("saved response differs from stdout: %v", err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got sttv1.MeetingResponse
+	if err := protojson.Unmarshal(saved, &got); err != nil || !proto.Equal(want, &got) {
+		t.Fatalf("saved JSON: %v; %s", err, saved)
+	}
+	savedText, err := os.ReadFile(path + ".transcription.txt")
+	if err != nil || !bytes.Equal(savedText, out.Bytes()) {
+		t.Fatalf("saved text differs from stdout: %v", err)
 	}
 }
 
@@ -126,12 +132,19 @@ func TestCLIReceivesResponseLargerThanDefaultGRPCLimit(t *testing.T) {
 	if err := run(context.Background(), []string{"-addr", address, "-file", writeRecording(t, []byte("audio")), "-out", output, "-timeout", "5s"}, &out, io.Discard); err != nil {
 		t.Fatal(err)
 	}
+	saved, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var got sttv1.MeetingResponse
-	if err := protojson.Unmarshal(out.Bytes(), &got); err != nil || len(got.Segments) != 1 || got.Segments[0].Text != want {
+	if err := protojson.Unmarshal(saved, &got); err != nil || len(got.Segments) != 1 || got.Segments[0].Text != want {
 		t.Fatalf("large response lost: %v", err)
 	}
-	saved, err := os.ReadFile(output)
-	if err != nil || !bytes.Equal(saved, out.Bytes()) {
+	if !strings.Contains(out.String(), want) {
+		t.Fatal("large readable response lost")
+	}
+	savedText, err := os.ReadFile(strings.TrimSuffix(output, ".json") + ".txt")
+	if err != nil || !bytes.Equal(savedText, out.Bytes()) {
 		t.Fatalf("custom result file: %v", err)
 	}
 }
@@ -195,5 +208,24 @@ func TestCLICancellationWhileWaitingForResult(t *testing.T) {
 	}
 	if out.Len() != 0 {
 		t.Fatal("canceled request printed successful response")
+	}
+}
+
+func TestReadableEmptyMeeting(t *testing.T) {
+	got := formatMeeting(&sttv1.MeetingResponse{DurationMs: 9_000_123})
+	want := "Длительность: 02:30:00.123\nГоворящие: не определены\n\nРечь не распознана.\n"
+	if got != want {
+		t.Fatalf("%q", got)
+	}
+}
+
+func TestCLIRejectsOverwritingAudioWithText(t *testing.T) {
+	path := writeRecording(t, []byte("audio"))
+	if err := run(context.Background(), []string{"-file", path, "-text-out", path}, io.Discard, io.Discard); err == nil {
+		t.Fatal("source audio accepted as text output")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != "audio" {
+		t.Fatalf("source audio changed: %q %v", data, err)
 	}
 }
