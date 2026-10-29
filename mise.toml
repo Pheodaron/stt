@@ -1,5 +1,5 @@
 [env]
-PODMAN_COMPOSE_PROVIDER = { default = "podman-compose" }
+PODMAN_COMPOSE_PROVIDER = "podman-compose"
 
 [tasks."build:cpu"]
 description = "Build the CPU image with its FP32 model using Podman"
