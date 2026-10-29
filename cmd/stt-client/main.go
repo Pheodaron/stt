@@ -37,10 +37,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	path := flags.String("file", "", "путь к аудиофайлу встречи")
 	output := flags.String("out", "", "исходный JSON; по умолчанию <аудиофайл>.transcription.json")
 	textOutput := flags.String("text-out", "", "читаемая расшифровка; по умолчанию рядом с JSON, с расширением .txt")
+	mergedOutput := flags.String("merged-out", "", "объединённые реплики одного говорящего; по умолчанию рядом с подробной стенограммой, с расширением .merged.txt")
 	chunkBytes := flags.Int("chunk-bytes", 1<<20, "размер чанка; не больше MEETING_CHUNK_BYTES сервера")
 	timeout := flags.Duration("timeout", 0, "deadline на загрузку и обработку, например 6h; 0 — без deadline")
 	flags.Usage = func() {
-		fmt.Fprintln(stderr, "Использование: stt-client -file meeting.ogg [-addr localhost:8080] [-out result.json] [-text-out result.txt] [-timeout 6h]")
+		fmt.Fprintln(stderr, "Использование: stt-client -file meeting.ogg [-addr localhost:8080] [-out result.json] [-text-out result.txt] [-merged-out result.merged.txt] [-timeout 6h]")
 		flags.PrintDefaults()
 	}
 	if err := flags.Parse(args); err != nil {
@@ -70,16 +71,19 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if *textOutput == "" {
 		*textOutput = strings.TrimSuffix(*output, ".json") + ".txt"
 	}
-	jsonPath, err := filepath.Abs(*output)
-	if err != nil {
-		return err
+	if *mergedOutput == "" {
+		*mergedOutput = strings.TrimSuffix(*textOutput, ".txt") + ".merged.txt"
 	}
-	textPath, err := filepath.Abs(*textOutput)
-	if err != nil {
-		return err
-	}
-	if jsonPath == textPath {
-		return fmt.Errorf("-out и -text-out должны указывать на разные файлы")
+	paths := make(map[string]bool)
+	for _, path := range []string{*output, *textOutput, *mergedOutput} {
+		absolute, err := filepath.Abs(path)
+		if err != nil {
+			return err
+		}
+		if paths[absolute] {
+			return fmt.Errorf("-out, -text-out и -merged-out должны указывать на разные файлы")
+		}
+		paths[absolute] = true
 	}
 	resultFile, err := prepareResult(*output, info)
 	if err != nil {
@@ -93,6 +97,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	defer os.Remove(textFile.Name())
 	defer textFile.Close()
+	mergedFile, err := prepareResult(*mergedOutput, info)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(mergedFile.Name())
+	defer mergedFile.Close()
 	if *timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, *timeout)
@@ -120,6 +130,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	if err := saveResult(textFile, *textOutput, text); err != nil {
+		return err
+	}
+	if err := saveResult(mergedFile, *mergedOutput, []byte(formatMergedMeeting(response))); err != nil {
 		return err
 	}
 	_, err = stdout.Write(text)

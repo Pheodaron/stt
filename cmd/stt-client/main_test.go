@@ -90,7 +90,8 @@ func TestCLIUploadsChunksAndPrintsCompleteResponse(t *testing.T) {
 	})
 	var out, stderr bytes.Buffer
 	path := writeRecording(t, data)
-	err := run(context.Background(), []string{"-addr", address, "-file", path, "-chunk-bytes", "4194304", "-timeout", "5s"}, &out, &stderr)
+	mergedPath := filepath.Join(filepath.Dir(path), "merged.txt")
+	err := run(context.Background(), []string{"-addr", address, "-file", path, "-chunk-bytes", "4194304", "-timeout", "5s", "-merged-out", mergedPath}, &out, &stderr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,6 +111,12 @@ func TestCLIUploadsChunksAndPrintsCompleteResponse(t *testing.T) {
 	savedText, err := os.ReadFile(path + ".transcription.txt")
 	if err != nil || !bytes.Equal(savedText, out.Bytes()) {
 		t.Fatalf("saved text differs from stdout: %v", err)
+	}
+	merged, err := os.ReadFile(mergedPath)
+	wantMerged := "Длительность: 00:00:01\nГоворящие: 1, 2\n\n" +
+		"[00:00:00 — 00:00:01] 1, 2 | одновременная речь | разрез по лимиту длительности\nПривет, мир!\n\n"
+	if err != nil || string(merged) != wantMerged {
+		t.Fatalf("custom merged transcript: %v", err)
 	}
 }
 
@@ -146,6 +153,21 @@ func TestCLIReceivesResponseLargerThanDefaultGRPCLimit(t *testing.T) {
 	savedText, err := os.ReadFile(strings.TrimSuffix(output, ".json") + ".txt")
 	if err != nil || !bytes.Equal(savedText, out.Bytes()) {
 		t.Fatalf("custom result file: %v", err)
+	}
+	merged, err := os.ReadFile(strings.TrimSuffix(output, ".json") + ".merged.txt")
+	if err != nil || string(merged) != formatMergedMeeting(&got) {
+		t.Fatalf("default merged transcript: %v", err)
+	}
+}
+
+func TestCLIRejectsOverwritingAudioWithMergedTranscript(t *testing.T) {
+	path := writeRecording(t, []byte("audio"))
+	if err := run(context.Background(), []string{"-file", path, "-merged-out", path}, io.Discard, io.Discard); err == nil {
+		t.Fatal("source audio accepted as merged output")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != "audio" {
+		t.Fatalf("source audio changed: %q %v", data, err)
 	}
 }
 
