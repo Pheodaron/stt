@@ -111,13 +111,16 @@ func speakerIntervals(base []Span) []diarization.Segment {
 	return result
 }
 
-// group joins nearby spans with the same speakers.
-func group(base []Span) []Span {
+// group joins consecutive turns of one speaker, retaining intervening silence.
+// A different speaker or overlap ends the group; merged audio must fit one ASR
+// core window. Longer individual turns are split by the caller.
+func group(base []Span, limit int64) []Span {
 	var result []Span
 	for _, v := range base {
 		if len(result) > 0 {
 			prev := &result[len(result)-1]
-			if v.Start-prev.End <= audio.SampleRate/4 && slices.Equal(prev.Speakers, v.Speakers) {
+			if !prev.Overlap && !v.Overlap && len(prev.Speakers) == 1 && len(v.Speakers) == 1 &&
+				prev.Speakers[0] == v.Speakers[0] && v.Start >= prev.End && v.End-prev.Start <= limit {
 				prev.End = v.End
 				continue
 			}

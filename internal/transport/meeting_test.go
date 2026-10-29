@@ -85,8 +85,19 @@ func TestMeetingGRPCUploadAndOneCompleteResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if calls.Load() != 1 || r.DurationMs != 1000 || !reflect.DeepEqual(r.SpeakerIds, []uint32{1, 2}) || len(r.Segments) != 1 || !r.Segments[0].HasOverlap || !reflect.DeepEqual(r.Segments[0].SpeakerIds, []uint32{1, 2}) {
+	if calls.Load() != 1 || r.DurationMs != 1000 || !reflect.DeepEqual(r.SpeakerIds, []uint32{1, 2}) || len(r.Segments) != 3 {
 		t.Fatalf("%+v", r)
+	}
+	// A short overlap is split equally. Speaker 2 must keep the two turns of
+	// speaker 1 separate, including after ASR grouping.
+	for i, want := range []struct {
+		start, end int64
+		speaker    uint32
+	}{{0, 500, 1}, {500, 750, 2}, {750, 1000, 1}} {
+		got := r.Segments[i]
+		if got.StartMs != want.start || got.EndMs != want.end || got.HasOverlap || !reflect.DeepEqual(got.SpeakerIds, []uint32{want.speaker}) {
+			t.Fatalf("segment %d: %+v", i, got)
+		}
 	}
 	entries, _ := filepath.Glob(filepath.Join(s.TempDir, "upload-*"))
 	if len(entries) != 0 {
